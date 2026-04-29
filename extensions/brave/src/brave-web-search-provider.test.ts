@@ -648,4 +648,108 @@ describe("brave web search provider", () => {
     expect(JSON.stringify(loggerInfoMock.mock.calls)).not.toContain("brave-test-key");
     expect(JSON.stringify(loggerInfoMock.mock.calls)).not.toContain("X-Subscription-Token");
   });
+
+  it.each([
+    {
+      status: 401,
+      body: '{"error":"unauthorized"}',
+    },
+    {
+      status: 403,
+      body: '{"error":"forbidden"}',
+    },
+    {
+      status: 422,
+      body: '{"error":{"code":"SUBSCRIPTION_TOKEN_INVALID","detail":"The provided subscription token is invalid.","status":422},"type":"ErrorResponse"}',
+    },
+    {
+      status: 400,
+      body: "The provided subscription token is invalid.",
+    },
+  ])("maps Brave auth failure status $status to terminal provider_auth_error", async (failure) => {
+    vi.stubEnv("BRAVE_API_KEY", "bad-key");
+    const mockFetch = vi.fn(async () => {
+      return new Response(failure.body, {
+        status: failure.status,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    global.fetch = mockFetch as typeof global.fetch;
+
+    const provider = createBraveWebSearchProvider();
+    const tool = provider.createTool({
+      config: {},
+      searchConfig: {
+        apiKey: "bad-key",
+        brave: { apiKey: "bad-key" },
+      },
+    });
+    if (!tool) {
+      throw new Error("Expected tool definition");
+    }
+
+    await expect(tool.execute({ query: "Mount Baker Easton Glacier", count: 3 })).resolves.toEqual({
+      ok: false,
+      error_type: "provider_auth_error",
+      provider: "brave",
+      terminal: true,
+      message: "Brave Search API key is invalid or unauthorized",
+    });
+  });
+
+  it("keeps successful Brave web_search behavior unchanged", async () => {
+    vi.stubEnv("BRAVE_API_KEY", "test-key");
+    const mockFetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          web: {
+            results: [
+              {
+                title: "Mount Baker Easton Glacier",
+                url: "https://example.com/easton",
+                description: "Easton Glacier route information",
+                age: "Apr 2026",
+              },
+            ],
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    });
+    global.fetch = mockFetch as typeof global.fetch;
+
+    const provider = createBraveWebSearchProvider();
+    const tool = provider.createTool({
+      config: {},
+      searchConfig: {
+        apiKey: "test-key",
+        brave: { apiKey: "test-key" },
+      },
+    });
+    if (!tool) {
+      throw new Error("Expected tool definition");
+    }
+
+    const result = await tool.execute({ query: "Mount Baker Easton Glacier", count: 3 });
+
+    expect(result).toMatchObject({
+      query: "Mount Baker Easton Glacier",
+      provider: "brave",
+      count: 1,
+      results: [
+        {
+          url: "https://example.com/easton",
+          published: "Apr 2026",
+          siteName: "example.com",
+        },
+      ],
+    });
+    expect(result).not.toMatchObject({
+      ok: false,
+      error_type: "provider_auth_error",
+    });
+  });
 });

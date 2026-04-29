@@ -81,6 +81,59 @@ function describeBraveRequestUrl(url: URL): {
   };
 }
 
+type BraveProviderAuthErrorPayload = {
+  ok: false;
+  error_type: "provider_auth_error";
+  provider: "brave";
+  terminal: true;
+  message: "Brave Search API key is invalid or unauthorized";
+};
+
+class BraveProviderAuthError extends Error {
+  readonly payload: BraveProviderAuthErrorPayload;
+
+  constructor() {
+    super("Brave Search API key is invalid or unauthorized");
+    this.name = "BraveProviderAuthError";
+    this.payload = createBraveProviderAuthErrorPayload();
+  }
+}
+
+function createBraveProviderAuthErrorPayload(): BraveProviderAuthErrorPayload {
+  return {
+    ok: false,
+    error_type: "provider_auth_error",
+    provider: "brave",
+    terminal: true,
+    message: "Brave Search API key is invalid or unauthorized",
+  };
+}
+
+function isBraveProviderAuthFailure(status: number, detail: string): boolean {
+  const normalizedDetail = detail.toLowerCase();
+  return (
+    status === 401 ||
+    status === 403 ||
+    (status === 422 && detail.includes("SUBSCRIPTION_TOKEN_INVALID")) ||
+    normalizedDetail.includes("subscription token invalid") ||
+    normalizedDetail.includes("provided subscription token is invalid")
+  );
+}
+
+function throwBraveApiError(params: {
+  label: string;
+  status: number;
+  statusText: string;
+  detail: string;
+}): never {
+  if (isBraveProviderAuthFailure(params.status, params.detail)) {
+    throw new BraveProviderAuthError();
+  }
+  throw new Error(
+    `${params.label} API error (${params.status}): ${params.detail || params.statusText}`,
+  );
+}
+
 function resolveBraveApiKey(searchConfig?: SearchConfigRecord): string | undefined {
   return (
     readConfiguredSecretString(searchConfig?.apiKey, "tools.web.search.apiKey") ??
@@ -226,9 +279,12 @@ async function runBraveLlmContextSearch(params: {
       });
       if (!response.ok) {
         const detail = await response.text();
-        throw new Error(
-          `Brave LLM Context API error (${response.status}): ${detail || response.statusText}`,
-        );
+        throwBraveApiError({
+          label: "Brave LLM Context",
+          status: response.status,
+          statusText: response.statusText,
+          detail,
+        });
       }
 
       const data = (await response.json()) as BraveLlmContextResponse;
@@ -310,9 +366,12 @@ async function runBraveWebSearch(params: {
       });
       if (!response.ok) {
         const detail = await response.text();
-        throw new Error(
-          `Brave Search API error (${response.status}): ${detail || response.statusText}`,
-        );
+        throwBraveApiError({
+          label: "Brave Search",
+          status: response.status,
+          statusText: response.statusText,
+          detail,
+        });
       }
 
       const data = (await response.json()) as BraveSearchResponse;
@@ -478,16 +537,63 @@ export async function executeBraveSearch(
   const timeoutSeconds = resolveSearchTimeoutSeconds(searchConfig);
   const cacheTtlMs = resolveSearchCacheTtlMs(searchConfig);
 
-  if (braveMode === "llm-context") {
-    const { results, sources } = await runBraveLlmContextSearch({
+  try {
+    if (braveMode === "llm-context") {
+      const { results, sources } = await runBraveLlmContextSearch({
+        baseUrl: braveBaseUrl,
+        endpointMode: braveEndpointMode,
+        query,
+        apiKey,
+        timeoutSeconds,
+        diagnostics,
+        country: country ?? undefined,
+        search_lang: normalizedLanguage.search_lang,
+        freshness,
+        dateAfter,
+        dateBefore: llmContextDateEnd,
+      });
+      const payload = {
+        query,
+        provider: "brave",
+        mode: "llm-context" as const,
+        count: results.length,
+        tookMs: Date.now() - start,
+        externalContent: {
+          untrusted: true,
+          source: "web_search",
+          provider: "brave",
+          wrapped: true,
+        },
+        results: results.map((entry) => ({
+          title: entry.title ? wrapWebContent(entry.title, "web_search") : "",
+          url: entry.url,
+          snippets: entry.snippets.map((snippet) => wrapWebContent(snippet, "web_search")),
+          siteName: entry.siteName,
+        })),
+        sources,
+      };
+      writeCachedSearchPayload(cacheKey, payload, cacheTtlMs);
+      logBraveHttp(diagnostics, "cache write", {
+        mode: "llm-context",
+        query,
+        cacheKey,
+        ttlMs: cacheTtlMs,
+        count: results.length,
+      });
+      return payload;
+    }
+
+    const results = await runBraveWebSearch({
       baseUrl: braveBaseUrl,
       endpointMode: braveEndpointMode,
       query,
+      count: resolveSearchCount(count, DEFAULT_SEARCH_COUNT),
       apiKey,
       timeoutSeconds,
       diagnostics,
       country: country ?? undefined,
       search_lang: normalizedLanguage.search_lang,
+      ui_lang: normalizedLanguage.ui_lang,
       freshness,
       dateAfter,
       dateBefore,
@@ -495,7 +601,6 @@ export async function executeBraveSearch(
     const payload = {
       query,
       provider: "brave",
-      mode: "llm-context" as const,
       count: results.length,
       tookMs: Date.now() - start,
       externalContent: {
@@ -504,60 +609,21 @@ export async function executeBraveSearch(
         provider: "brave",
         wrapped: true,
       },
-      results: results.map((entry) => ({
-        title: entry.title ? wrapWebContent(entry.title, "web_search") : "",
-        url: entry.url,
-        snippets: entry.snippets.map((snippet) => wrapWebContent(snippet, "web_search")),
-        siteName: entry.siteName,
-      })),
-      sources,
+      results,
     };
     writeCachedSearchPayload(cacheKey, payload, cacheTtlMs);
     logBraveHttp(diagnostics, "cache write", {
-      mode: "llm-context",
+      mode: "web",
       query,
       cacheKey,
       ttlMs: cacheTtlMs,
       count: results.length,
     });
     return payload;
+  } catch (error) {
+    if (error instanceof BraveProviderAuthError) {
+      return error.payload;
+    }
+    throw error;
   }
-
-  const results = await runBraveWebSearch({
-    baseUrl: braveBaseUrl,
-    endpointMode: braveEndpointMode,
-    query,
-    count: resolveSearchCount(count, DEFAULT_SEARCH_COUNT),
-    apiKey,
-    timeoutSeconds,
-    diagnostics,
-    country: country ?? undefined,
-    search_lang: normalizedLanguage.search_lang,
-    ui_lang: normalizedLanguage.ui_lang,
-    freshness,
-    dateAfter,
-    dateBefore,
-  });
-  const payload = {
-    query,
-    provider: "brave",
-    count: results.length,
-    tookMs: Date.now() - start,
-    externalContent: {
-      untrusted: true,
-      source: "web_search",
-      provider: "brave",
-      wrapped: true,
-    },
-    results,
-  };
-  writeCachedSearchPayload(cacheKey, payload, cacheTtlMs);
-  logBraveHttp(diagnostics, "cache write", {
-    mode: "web",
-    query,
-    cacheKey,
-    ttlMs: cacheTtlMs,
-    count: results.length,
-  });
-  return payload;
 }

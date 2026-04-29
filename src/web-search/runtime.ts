@@ -405,6 +405,15 @@ function isStructuredAvailabilityError(result: unknown): result is { error: stri
   return typeof error === "string" && /^missing_[a-z0-9_]*api_key$/i.test(error);
 }
 
+function isTerminalStructuredError(result: unknown): result is { terminal: true } {
+  return (
+    Boolean(result) &&
+    typeof result === "object" &&
+    !Array.isArray(result) &&
+    (result as { terminal?: unknown }).terminal === true
+  );
+}
+
 export async function runWebSearch(params: RunWebSearchParams): Promise<RunWebSearchResult> {
   const config = resolveWebSearchRuntimeConfig(params.config);
   const search = resolveSearchConfig(config);
@@ -442,6 +451,12 @@ export async function runWebSearch(params: RunWebSearchParams): Promise<RunWebSe
         continue;
       }
       const executed = await definition.execute(params.args, { signal: params.signal });
+      if (isTerminalStructuredError(executed)) {
+        return {
+          provider: candidate.id,
+          result: executed,
+        };
+      }
       if (allowFallback && isStructuredAvailabilityError(executed)) {
         lastError = new Error(`web_search provider "${candidate.id}" returned ${executed.error}`);
         continue;
