@@ -437,6 +437,59 @@ describe("preflightDiscordMessage", () => {
     expect(result?.threadName).toBe("project-followup");
   });
 
+  it.each([
+    ["claude-auth-status paula"],
+    ["claude-reauth"],
+    ["claude-reauth paula --force"],
+    ["<@1470579139273556119> claude-auth-status paula"],
+    ["claude-auth-status paula\nclaude-reauth\nclaude-auth-status paula"],
+  ])("drops Paula-owned Claude auth control message %j in #home", async (content) => {
+    const channelId = "home-channel-1";
+    const message = createDiscordMessage({
+      id: `m-auth-${content.length}`,
+      channelId,
+      content,
+      author: {
+        id: "user-1",
+        bot: false,
+        username: "lucas",
+      },
+    });
+
+    const result = await runGuildPreflight({
+      channelId,
+      guildId: "guild-1",
+      message,
+      discordConfig: {} as DiscordConfig,
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("keeps unrelated messages routing normally even if they mention claude-reauth", async () => {
+    const channelId = "home-channel-1";
+    const message = createDiscordMessage({
+      id: "m-auth-mention",
+      channelId,
+      content: "<@openclaw-bot> remind me to run claude-reauth tomorrow",
+      mentionedUsers: [{ id: "openclaw-bot" }],
+      author: {
+        id: "user-1",
+        bot: false,
+        username: "lucas",
+      },
+    });
+
+    const result = await runGuildPreflight({
+      channelId,
+      guildId: "guild-1",
+      message,
+      discordConfig: {} as DiscordConfig,
+    });
+
+    expect(result).not.toBeNull();
+  });
+
   it("restores direct-message bindings by user target instead of DM channel id", async () => {
     registerSessionBindingAdapter({
       channel: "discord",
