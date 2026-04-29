@@ -36,6 +36,7 @@ import {
 let preflightDiscordMessage: typeof import("./message-handler.preflight.js").preflightDiscordMessage;
 let resolvePreflightMentionRequirement: typeof import("./message-handler.preflight.js").resolvePreflightMentionRequirement;
 let shouldIgnoreBoundThreadWebhookMessage: typeof import("./message-handler.preflight.js").shouldIgnoreBoundThreadWebhookMessage;
+let reauthHelpers: typeof import("./message-handler.preflight-helpers.js");
 let threadBindingTesting: typeof import("./thread-bindings.js").__testing;
 let createThreadBindingManager: typeof import("./thread-bindings.js").createThreadBindingManager;
 
@@ -45,6 +46,7 @@ beforeAll(async () => {
     resolvePreflightMentionRequirement,
     shouldIgnoreBoundThreadWebhookMessage,
   } = await import("./message-handler.preflight.js"));
+  reauthHelpers = await import("./message-handler.preflight-helpers.js");
   ({ __testing: threadBindingTesting, createThreadBindingManager } =
     await import("./thread-bindings.js"));
 });
@@ -98,14 +100,18 @@ function expectPreflightResult(
   return result;
 }
 
-function createThreadClient(params: { threadId: string; parentId: string }): DiscordClient {
+function createThreadClient(params: {
+  threadId: string;
+  parentId: string;
+  threadName?: string;
+}): DiscordClient {
   return {
     fetchChannel: async (channelId: string) => {
       if (channelId === params.threadId) {
         return {
           id: params.threadId,
           type: ChannelType.PublicThread,
-          name: "focus",
+          name: params.threadName ?? "focus",
           parentId: params.parentId,
           ownerId: "owner-1",
         };
@@ -355,6 +361,80 @@ describe("preflightDiscordMessage", () => {
     });
 
     expect(result).toBeNull();
+  });
+
+  it("drops Paula-owned Claude reauth thread callback messages before agent routing", async () => {
+    const threadId = "reauth-thread-1";
+    const parentId = "home-channel-1";
+    const message = createDiscordMessage({
+      id: "m-reauth-code",
+      channelId: threadId,
+      content:
+        "z093JcNQqbCZMjft0LuXlrSmI41ANwJJIKy1CPJnqg6GEeBs#bqPfnlbdHMmCETDzK5izOj5hHYoQbUcvLzdawfqHRSk",
+      author: {
+        id: "user-1",
+        bot: false,
+        username: "alice",
+      },
+    });
+
+    const result = await preflightDiscordMessage({
+      ...createPreflightArgs({
+        cfg: DEFAULT_PREFLIGHT_CFG,
+        discordConfig: {} as DiscordConfig,
+        data: createGuildEvent({
+          channelId: threadId,
+          guildId: "guild-1",
+          author: message.author,
+          message,
+        }),
+        client: createThreadClient({
+          threadId,
+          parentId,
+          threadName: "reauth-claude-20260429",
+        }),
+      }),
+    });
+
+    expect(reauthHelpers.isClaudeReauthCallbackText(message.content)).toBe(true);
+    expect(result).toBeNull();
+  });
+
+  it("keeps non-reauth thread messages on the normal routing path", async () => {
+    const threadId = "normal-thread-1";
+    const parentId = "home-channel-1";
+    const message = createDiscordMessage({
+      id: "m-normal-thread",
+      channelId: threadId,
+      content: "<@openclaw-bot> please summarize this thread.",
+      mentionedUsers: [{ id: "openclaw-bot" }],
+      author: {
+        id: "user-1",
+        bot: false,
+        username: "alice",
+      },
+    });
+
+    const result = await preflightDiscordMessage({
+      ...createPreflightArgs({
+        cfg: DEFAULT_PREFLIGHT_CFG,
+        discordConfig: {} as DiscordConfig,
+        data: createGuildEvent({
+          channelId: threadId,
+          guildId: "guild-1",
+          author: message.author,
+          message,
+        }),
+        client: createThreadClient({
+          threadId,
+          parentId,
+          threadName: "project-followup",
+        }),
+      }),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.threadName).toBe("project-followup");
   });
 
   it("restores direct-message bindings by user target instead of DM channel id", async () => {

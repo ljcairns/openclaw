@@ -9,6 +9,23 @@ import type { DiscordChannelInfo } from "./message-utils.js";
 import { isRecentlyUnboundThreadWebhookMessage } from "./thread-bindings.js";
 
 const DISCORD_BOUND_THREAD_SYSTEM_PREFIXES = ["⚙️", "🤖", "🧰"];
+const CLAUDE_REAUTH_THREAD_NAME_RE = /^reauth-claude-/i;
+const CALLBACK_CODE_STATE_RE = /\b[A-Za-z0-9]{20,}#[A-Za-z0-9_-]{20,}\b/;
+
+export function isClaudeReauthThreadName(threadName?: string | null): boolean {
+  return CLAUDE_REAUTH_THREAD_NAME_RE.test(normalizeOptionalString(threadName) ?? "");
+}
+
+export function isClaudeReauthCallbackText(text?: string | null): boolean {
+  return CALLBACK_CODE_STATE_RE.test(normalizeOptionalString(text) ?? "");
+}
+
+export function shouldIgnoreClaudeReauthThreadMessage(params: {
+  threadName?: string | null;
+  text?: string | null;
+}): boolean {
+  return isClaudeReauthThreadName(params.threadName);
+}
 
 export function isBoundThreadBotSystemMessage(params: {
   isBoundThreadSession: boolean;

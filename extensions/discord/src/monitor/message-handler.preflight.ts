@@ -34,6 +34,7 @@ import {
   resolveDiscordMentionState,
   resolveInjectedBoundThreadLookupRecord,
   resolvePreflightMentionRequirement,
+  shouldIgnoreClaudeReauthThreadMessage,
   shouldIgnoreBoundThreadWebhookMessage,
 } from "./message-handler.preflight-helpers.js";
 import { buildDiscordPreflightHistoryEntry } from "./message-handler.preflight-history.js";
@@ -374,6 +375,15 @@ export async function preflightDiscordMessage(
     threadParentId,
     threadParentName,
   });
+  if (
+    shouldIgnoreClaudeReauthThreadMessage({
+      threadName,
+      text: messageText,
+    })
+  ) {
+    logVerbose(`discord: drop Paula-owned Claude reauth thread message ${message.id}`);
+    return null;
+  }
   const channelMatchMeta = formatAllowlistMatchMeta(channelConfig);
   logDiscordPreflightChannelConfig({
     channelConfig,
