@@ -1,8 +1,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Api, Model } from "@mariozechner/pi-ai";
 import { expect, vi, type Mock } from "vitest";
 import type {
   AssembleResult,
@@ -19,6 +17,8 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
 } from "../../../shared/string-coerce.js";
+import type { AgentMessage } from "../../agent-core-contract.js";
+import type { Api, Model } from "../../pi-ai-contract.js";
 import type { EmbeddedContextFile } from "../../pi-embedded-helpers.js";
 import type { MessagingToolSend } from "../../pi-embedded-messaging.types.js";
 import type { WorkspaceBootstrapFile } from "../../workspace.js";
@@ -230,52 +230,7 @@ export function getHoisted(): AttemptSpawnWorkspaceHoisted {
   return hoisted;
 }
 
-const emptyPluginMetadataSnapshot: PluginMetadataSnapshot = {
-  policyHash: "",
-  index: {
-    version: 1,
-    hostContractVersion: "test",
-    compatRegistryVersion: "test",
-    migrationVersion: 1,
-    policyHash: "",
-    generatedAtMs: 1,
-    installRecords: {},
-    plugins: [],
-    diagnostics: [],
-  },
-  registryDiagnostics: [],
-  manifestRegistry: { plugins: [], diagnostics: [] },
-  plugins: [],
-  diagnostics: [],
-  byPluginId: new Map(),
-  normalizePluginId: (pluginId: string) => pluginId,
-  owners: {
-    channels: new Map(),
-    channelConfigs: new Map(),
-    providers: new Map(),
-    modelCatalogProviders: new Map(),
-    cliBackends: new Map(),
-    setupProviders: new Map(),
-    commandAliases: new Map(),
-    contracts: new Map(),
-  },
-  metrics: {
-    registrySnapshotMs: 0,
-    manifestRegistryMs: 0,
-    ownerMapsMs: 0,
-    totalMs: 0,
-    indexPluginCount: 0,
-    manifestPluginCount: 0,
-  },
-};
-
-vi.mock("../../../plugins/plugin-metadata-snapshot.js", () => ({
-  isPluginMetadataSnapshotCompatible: () => true,
-  listPluginOriginsFromMetadataSnapshot: () => new Map(),
-  loadPluginMetadataSnapshot: () => emptyPluginMetadataSnapshot,
-}));
-
-vi.mock("@mariozechner/pi-coding-agent", () => {
+function createPiCodingAgentMock() {
   function AuthStorage() {}
   class DefaultResourceLoader {
     async reload() {}
@@ -295,7 +250,9 @@ vi.mock("@mariozechner/pi-coding-agent", () => {
       open: (...args: unknown[]) => hoisted.sessionManagerOpenMock(...args),
     },
   };
-});
+}
+
+vi.mock("../../pi-coding-agent-contract.js", createPiCodingAgentMock);
 
 vi.mock("../../subagent-spawn.js", () => ({
   SUBAGENT_SPAWN_MODES: ["run", "session"],
@@ -426,10 +383,6 @@ vi.mock("../../session-file-repair.js", () => ({
 vi.mock("../session-manager-cache.js", () => ({
   prewarmSessionFile: async () => {},
   trackSessionManagerAccess: () => {},
-}));
-
-vi.mock("../session-manager-init.js", () => ({
-  prepareSessionManagerForRun: async () => {},
 }));
 
 vi.mock("../../session-write-lock.js", () => ({
