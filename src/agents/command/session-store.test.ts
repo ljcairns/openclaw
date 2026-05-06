@@ -382,7 +382,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
         } as never,
       });
 
-      const persisted = loadSessionStore(storePath, { skipCache: true })[sessionKey];
+      const persisted = loadSessionStore(storePath)[sessionKey];
       expect(persisted?.acp).toMatchObject({
         backend: "acpx",
         agent: "codex",
@@ -438,7 +438,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
         } as never,
       });
 
-      const persisted = loadSessionStore(storePath, { skipCache: true })[sessionKey];
+      const persisted = loadSessionStore(storePath)[sessionKey];
       expect(persisted).toMatchObject({
         status: "done",
         startedAt: 1_000,
@@ -502,7 +502,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
         } as never,
       });
 
-      const persisted = loadSessionStore(storePath, { skipCache: true })[sessionKey];
+      const persisted = loadSessionStore(storePath)[sessionKey];
       expect(persisted?.systemPromptReport?.bootstrapTruncation?.warningSignaturesSeen).toEqual([
         "sig-a",
         "sig-b",
@@ -572,7 +572,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
         authEpoch: "auth-epoch-1",
       });
 
-      const persisted = loadSessionStore(storePath, { skipCache: true })[first.sessionKey!];
+      const persisted = loadSessionStore(storePath)[first.sessionKey!];
       expect(persisted?.cliSessionBindings?.["claude-cli"]).toEqual({
         sessionId: "claude-cli-session-1",
         authEpoch: "auth-epoch-1",
@@ -1225,7 +1225,7 @@ describe("clearCliSessionInStore", () => {
       expect(cleared?.claudeCliSessionId).toBeUndefined();
       expect(sessionStore[sessionKey]).toEqual(cleared);
 
-      const persisted = loadSessionStore(storePath, { skipCache: true })[sessionKey];
+      const persisted = loadSessionStore(storePath)[sessionKey];
       expect(persisted?.cliSessionBindings?.["claude-cli"]).toBeUndefined();
       expect(persisted?.cliSessionBindings?.["codex-cli"]).toEqual({
         sessionId: "codex-session-1",
@@ -1257,9 +1257,7 @@ describe("clearCliSessionInStore", () => {
 
       expect(cleared).toBeUndefined();
       expect(sessionStore[existingKey]?.claudeCliSessionId).toBe("claude-session-1");
-      expect(
-        loadSessionStore(storePath, { skipCache: true })[existingKey]?.claudeCliSessionId,
-      ).toBe("claude-session-1");
+      expect(loadSessionStore(storePath)[existingKey]?.claudeCliSessionId).toBe("claude-session-1");
     });
   });
 });
