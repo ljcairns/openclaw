@@ -100,8 +100,6 @@ import type {
 } from "./session-utils.types.js";
 
 export {
-  archiveFileOnDisk,
-  archiveSessionTranscripts,
   attachOpenClawTranscriptMeta,
   capArrayByJsonBytes,
   readFirstUserMessageFromTranscript,
