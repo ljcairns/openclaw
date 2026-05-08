@@ -20,7 +20,7 @@ function writeStore(store: Record<string, SessionEntry>) {
   }
 }
 
-async function seedLeafOwnedChildSession(_storePath: string, leafKey = "agent:main:subagent:leaf") {
+async function seedLeafOwnedChildSession(leafKey = "agent:main:subagent:leaf") {
   const childKey = `${leafKey}:subagent:child`;
   writeStore({
     [leafKey]: {
@@ -58,12 +58,11 @@ async function seedLeafOwnedChildSession(_storePath: string, leafKey = "agent:ma
 }
 
 async function expectLeafSubagentControlForbidden(params: {
-  storePath: string;
   action: "kill" | "steer";
   callId: string;
   message?: string;
 }) {
-  const { childKey, tool } = await seedLeafOwnedChildSession(params.storePath);
+  const { childKey, tool } = await seedLeafOwnedChildSession();
   const result = await tool.execute(params.callId, {
     action: params.action,
     target: childKey,
@@ -78,7 +77,6 @@ async function expectLeafSubagentControlForbidden(params: {
 }
 
 describe("openclaw-tools: subagents scope isolation", () => {
-  let storePath = "";
   let stateDir = "";
 
   beforeEach(async () => {
@@ -87,7 +85,6 @@ describe("openclaw-tools: subagents scope isolation", () => {
     callGatewayMock.mockReset();
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-subagents-scope-"));
     vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
-    storePath = path.join(stateDir, "agents", "main", "sessions", "sessions.json");
     setSubagentsConfigOverride({
       session: createPerSenderSessionConfig({}),
     });
@@ -218,7 +215,6 @@ describe("openclaw-tools: subagents scope isolation", () => {
 
   it("leaf subagents cannot kill even explicitly-owned child sessions", async () => {
     await expectLeafSubagentControlForbidden({
-      storePath,
       action: "kill",
       callId: "call-leaf-kill",
     });
@@ -226,7 +222,6 @@ describe("openclaw-tools: subagents scope isolation", () => {
 
   it("leaf subagents cannot steer even explicitly-owned child sessions", async () => {
     await expectLeafSubagentControlForbidden({
-      storePath,
       action: "steer",
       callId: "call-leaf-steer",
       message: "continue",
