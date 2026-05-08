@@ -1426,6 +1426,7 @@ export async function runEmbeddedAttempt(
         }),
         {
           agentId: sessionAgentId,
+          sessionId: params.sessionId,
           sessionKey: params.sessionKey,
           config: params.config,
           contextWindowTokens: params.contextTokenBudget,
