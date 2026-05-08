@@ -569,6 +569,11 @@ export const agentHandlers: GatewayRequestHandlers = {
       cleanupBundleMcpOnRunEnd?: boolean;
       label?: string;
       inputProvenance?: InputProvenance;
+      initialVfsEntries?: Array<{
+        path: string;
+        contentBase64: string;
+        metadata?: Record<string, unknown>;
+      }>;
       workspaceDir?: string;
       voiceWakeTrigger?: string;
     };
@@ -1403,6 +1408,7 @@ export const agentHandlers: GatewayRequestHandlers = {
             acpTurnSource: request.acpTurnSource,
             internalEvents: request.internalEvents,
             inputProvenance,
+            initialVfsEntries: request.initialVfsEntries,
             cleanupBundleMcpOnRunEnd: request.cleanupBundleMcpOnRunEnd,
             abortSignal: activeRunAbort.controller.signal,
             // Internal-only: allow workspace override for spawned subagent runs.
