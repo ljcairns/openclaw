@@ -861,20 +861,16 @@ describe("sessions", () => {
     const readSpy = vi.spyOn(fsSync, "readFileSync");
     const parseSpy = vi.spyOn(JSON, "parse");
     try {
-      await updateSessionStore(
-        storePath,
-        (store) => {
-          const existing = store[mainSessionKey];
-          if (!existing) {
-            throw new Error("missing session entry");
-          }
-          store[mainSessionKey] = {
-            ...existing,
-            thinkingLevel: "high",
-          };
-        },
-        { skipMaintenance: true },
-      );
+      await updateSessionStore(storePath, (store) => {
+        const existing = store[mainSessionKey];
+        if (!existing) {
+          throw new Error("missing session entry");
+        }
+        store[mainSessionKey] = {
+          ...existing,
+          thinkingLevel: "high",
+        };
+      });
 
       expect(readSpy).not.toHaveBeenCalled();
       expect(parseSpy).not.toHaveBeenCalled();
@@ -903,21 +899,17 @@ describe("sessions", () => {
     expect(loadSessionStore(storePath)[mainSessionKey]?.thinkingLevel).toBe("low");
 
     await expect(
-      updateSessionStore(
-        storePath,
-        (store) => {
-          const existing = store[mainSessionKey];
-          if (!existing) {
-            throw new Error("missing session entry");
-          }
-          store[mainSessionKey] = {
-            ...existing,
-            thinkingLevel: "mutated-before-throw",
-          };
-          throw new Error("boom");
-        },
-        { skipMaintenance: true },
-      ),
+      updateSessionStore(storePath, (store) => {
+        const existing = store[mainSessionKey];
+        if (!existing) {
+          throw new Error("missing session entry");
+        }
+        store[mainSessionKey] = {
+          ...existing,
+          thinkingLevel: "mutated-before-throw",
+        };
+        throw new Error("boom");
+      }),
     ).rejects.toThrow("boom");
 
     const readSpy = vi.spyOn(fsSync, "readFileSync");
