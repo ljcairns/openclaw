@@ -1723,7 +1723,7 @@ ensure_pnpm() {
     if command -v corepack &> /dev/null; then
         ui_info "Configuring pnpm via Corepack"
         corepack enable >/dev/null 2>&1 || true
-        if ! run_quiet_step "Activating pnpm" corepack prepare pnpm@10 --activate; then
+        if ! run_quiet_step "Activating pnpm" corepack prepare pnpm@11 --activate; then
             ui_warn "Corepack pnpm activation failed; falling back"
         fi
         refresh_shell_command_cache
@@ -1738,7 +1738,7 @@ ensure_pnpm() {
 
     ui_info "Installing pnpm via npm"
     fix_npm_permissions
-    run_quiet_step "Installing pnpm" npm install -g pnpm@10
+    run_quiet_step "Installing pnpm" npm install -g pnpm@11
     refresh_shell_command_cache
     if detect_pnpm_cmd && pnpm_cmd_is_ready; then
         ui_success "pnpm ready ($(pnpm_cmd_pretty))"
@@ -1757,7 +1757,7 @@ ensure_pnpm_binary_for_scripts() {
     if command -v corepack >/dev/null 2>&1; then
         ui_info "Ensuring pnpm command is available"
         corepack enable >/dev/null 2>&1 || true
-        corepack prepare pnpm@10 --activate >/dev/null 2>&1 || true
+        corepack prepare pnpm@11 --activate >/dev/null 2>&1 || true
         refresh_shell_command_cache
         if command -v pnpm >/dev/null 2>&1; then
             ui_success "pnpm command enabled via Corepack"
@@ -1783,7 +1783,7 @@ EOF
     fi
 
     ui_error "pnpm command not available on PATH"
-    ui_info "Install pnpm globally (npm install -g pnpm@10) and retry"
+    ui_info "Install pnpm globally (npm install -g pnpm@11) and retry"
     return 1
 }
 
