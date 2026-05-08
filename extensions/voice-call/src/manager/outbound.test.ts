@@ -60,7 +60,6 @@ function createActiveCallContext(params: { hangupCall?: ReturnType<typeof vi.fn>
     activeCalls: new Map([["call-1", call]]),
     providerCallIdMap: new Map([["provider-1", "call-1"]]),
     provider: { hangupCall },
-    storePath: "/tmp/voice-call.json",
     transcriptWaiters: new Map(),
     maxDurationTimers: new Map(),
   };
@@ -84,7 +83,6 @@ describe("voice-call outbound helpers", () => {
         maxConcurrentCalls: 1,
         outbound: { defaultMode: "conversation", notifyHangupDelaySec: 0 },
       },
-      storePath: "/tmp/voice-call.json",
       webhookUrl: "https://example.com/webhook",
     };
 
@@ -146,7 +144,6 @@ describe("voice-call outbound helpers", () => {
         fromNumber: "+14155550100",
         tts: { provider: "openai", providers: { openai: { voice: "nova" } } },
       },
-      storePath: "/tmp/voice-call.json",
       webhookUrl: "https://example.com/webhook",
     };
 
@@ -186,7 +183,6 @@ describe("voice-call outbound helpers", () => {
         fromNumber: "+14155550100",
         sessionScope: "per-call",
       },
-      storePath: "/tmp/voice-call.json",
       webhookUrl: "https://example.com/webhook",
     };
 
@@ -210,7 +206,6 @@ describe("voice-call outbound helpers", () => {
         outbound: { defaultMode: "conversation" },
         fromNumber: "+14155550100",
       },
-      storePath: "/tmp/voice-call.json",
       webhookUrl: "https://example.com/webhook",
     };
 
@@ -255,7 +250,6 @@ describe("voice-call outbound helpers", () => {
         outbound: { defaultMode: "notify" },
         fromNumber: "+14155550100",
       },
-      storePath: "/tmp/voice-call.json",
       webhookUrl: "https://example.com/webhook",
     };
 
@@ -288,7 +282,6 @@ describe("voice-call outbound helpers", () => {
         maxConcurrentCalls: 3,
         outbound: { defaultMode: "conversation" },
       },
-      storePath: "/tmp/voice-call.json",
       webhookUrl: "https://example.com/webhook",
     };
 
@@ -308,7 +301,6 @@ describe("voice-call outbound helpers", () => {
       providerCallIdMap: new Map(),
       provider: { name: "twilio", playTts },
       config: { tts: { provider: "openai", providers: { openai: { voice: "alloy" } } } },
-      storePath: "/tmp/voice-call.json",
     };
 
     await expect(speak(ctx as never, "call-1", "hello")).resolves.toEqual({ success: true });
@@ -348,7 +340,6 @@ describe("voice-call outbound helpers", () => {
           },
         },
       },
-      storePath: "/tmp/voice-call.json",
     };
 
     await expect(speak(ctx as never, "call-1", "hello")).resolves.toEqual({ success: true });
@@ -386,7 +377,6 @@ describe("voice-call outbound helpers", () => {
           },
         },
       },
-      storePath: "/tmp/voice-call.json",
     };
 
     await expect(speak(ctx as never, "call-1", "hello")).resolves.toEqual({ success: true });
@@ -407,7 +397,6 @@ describe("voice-call outbound helpers", () => {
       providerCallIdMap: new Map(),
       provider: { name: "twilio", sendDtmf: sendDtmfProvider },
       config: {},
-      storePath: "/tmp/voice-call.json",
     };
 
     await expect(sendDtmf(ctx as never, "call-1", "ww123#")).resolves.toEqual({
@@ -427,7 +416,6 @@ describe("voice-call outbound helpers", () => {
       providerCallIdMap: new Map(),
       provider: { name: "telnyx" },
       config: {},
-      storePath: "/tmp/voice-call.json",
     };
 
     await expect(sendDtmf(ctx as never, "call-1", "abc")).resolves.toEqual({
@@ -502,7 +490,6 @@ describe("voice-call outbound helpers", () => {
           providerCallIdMap: new Map(),
           provider: { name: "twilio", playTts: vi.fn() },
           config: {},
-          storePath: "/tmp/voice-call.json",
         } as never,
         "missing",
         "hello",
@@ -517,7 +504,6 @@ describe("voice-call outbound helpers", () => {
           ]),
           providerCallIdMap: new Map(),
           provider: { hangupCall: vi.fn() },
-          storePath: "/tmp/voice-call.json",
           transcriptWaiters: new Map(),
           maxDurationTimers: new Map(),
         } as never,

@@ -27,6 +27,7 @@ import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import { isPlainObject } from "../utils.js";
 import { copyChannelAgentToolMeta } from "./channel-tools.js";
 import type { AgentToolArtifactStore } from "./filesystem/agent-filesystem.js";
+import { adjustedParamsByToolCallId } from "./pi-tools.before-tool-call.state.js";
 import { normalizeToolName } from "./tool-policy.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { callGatewayTool } from "./tools/gateway.js";

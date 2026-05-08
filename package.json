@@ -601,6 +601,14 @@
       "types": "./dist/plugin-sdk/migration-runtime.d.ts",
       "default": "./dist/plugin-sdk/migration-runtime.js"
     },
+    "./plugin-sdk/plugin-state-runtime": {
+      "types": "./dist/plugin-sdk/plugin-state-runtime.d.ts",
+      "default": "./dist/plugin-sdk/plugin-state-runtime.js"
+    },
+    "./plugin-sdk/sqlite-state-lock": {
+      "types": "./dist/plugin-sdk/sqlite-state-lock.d.ts",
+      "default": "./dist/plugin-sdk/sqlite-state-lock.js"
+    },
     "./plugin-sdk/markdown-table-runtime": {
       "types": "./dist/plugin-sdk/markdown-table-runtime.d.ts",
       "default": "./dist/plugin-sdk/markdown-table-runtime.js"
@@ -1327,11 +1335,12 @@
     "canvas:a2ui:bundle": "node scripts/bundle-a2ui.mjs",
     "changed:lanes": "node scripts/changed-lanes.mjs",
     "check": "node scripts/check.mjs",
-    "check:architecture": "pnpm check:import-cycles && pnpm check:madge-import-cycles && pnpm check:deprecated-internal-config-api && pnpm check:deprecated-jsdoc",
+    "check:architecture": "pnpm check:import-cycles && pnpm check:madge-import-cycles && pnpm check:deprecated-internal-config-api && pnpm check:deprecated-jsdoc && pnpm check:database-first-legacy-stores && pnpm db:kysely:check",
     "check:base-config-schema": "node --import tsx scripts/generate-base-config-schema.ts --check",
     "check:bundled-channel-config-metadata": "node --import tsx scripts/generate-bundled-channel-config-metadata.ts --check",
     "check:changed": "node scripts/check-changed.mjs",
     "check:changelog-attributions": "node scripts/check-changelog-attributions.mjs",
+    "check:database-first-legacy-stores": "node scripts/check-database-first-legacy-stores.mjs",
     "check:deprecated-internal-config-api": "node scripts/check-deprecated-internal-config-api.mjs",
     "check:deprecated-jsdoc": "node scripts/check-deprecated-jsdoc.mjs",
     "check:docs": "pnpm format:docs:check && pnpm lint:docs && pnpm docs:check-mdx && pnpm docs:check-i18n-glossary && pnpm docs:check-links",
@@ -1361,6 +1370,8 @@
     "config:docs:check": "node --import tsx scripts/generate-config-doc-baseline.ts --check",
     "config:docs:gen": "node --import tsx scripts/generate-config-doc-baseline.ts --write",
     "config:schema:check": "node --import tsx scripts/generate-base-config-schema.ts --check",
+    "db:kysely:check": "node scripts/generate-kysely-types.mjs --verify",
+    "db:kysely:gen": "node scripts/generate-kysely-types.mjs",
     "config:schema:gen": "node --import tsx scripts/generate-base-config-schema.ts --write",
     "crabbox:hydrate": "node scripts/crabbox-wrapper.mjs actions hydrate",
     "crabbox:run": "node scripts/crabbox-wrapper.mjs run",

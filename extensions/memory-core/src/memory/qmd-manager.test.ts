@@ -6,6 +6,9 @@ import type { DatabaseSync } from "node:sqlite";
 import { setTimeout as scheduleNativeTimeout } from "node:timers";
 import type { Mock } from "vitest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { replaceSqliteSessionTranscriptEvents } from "../../../../src/config/sessions/transcript-store.sqlite.js";
+import { closeOpenClawAgentDatabasesForTest } from "../../../../src/state/openclaw-agent-db.js";
+import { closeOpenClawStateDatabaseForTest } from "../../../../src/state/openclaw-state-db.js";
 
 const { logWarnMock, logDebugMock, logInfoMock } = vi.hoisted(() => ({
   logWarnMock: vi.fn(),
@@ -20,9 +23,9 @@ const { watchMock } = vi.hoisted(() => ({
     });
   }),
 }));
-const { withFileLockMock } = vi.hoisted(() => ({
-  withFileLockMock: vi.fn(
-    async <T>(_filePath: string, _options: unknown, fn: () => Promise<T>) => await fn(),
+const { withOpenClawStateLockMock } = vi.hoisted(() => ({
+  withOpenClawStateLockMock: vi.fn(
+    async <T>(_key: string, _options: unknown, fn: () => Promise<T>) => await fn(),
   ),
 }));
 const MEMORY_EMBEDDING_PROVIDERS_KEY = Symbol.for("openclaw.memoryEmbeddingProviders");
@@ -114,13 +117,13 @@ vi.mock("chokidar", () => ({
   watch: watchMock,
 }));
 
-vi.mock("openclaw/plugin-sdk/file-lock", async () => {
-  const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/file-lock")>(
-    "openclaw/plugin-sdk/file-lock",
+vi.mock("openclaw/plugin-sdk/sqlite-state-lock", async () => {
+  const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/sqlite-state-lock")>(
+    "openclaw/plugin-sdk/sqlite-state-lock",
   );
   return {
     ...actual,
-    withFileLock: withFileLockMock,
+    withOpenClawStateLock: withOpenClawStateLockMock,
   };
 });
 
@@ -195,6 +198,23 @@ describe("QmdMemoryManager", () => {
     return { manager: requireValue(manager, "manager missing"), resolved };
   }
 
+  function seedSessionTranscript(params?: { sessionId?: string; content?: string }): string {
+    const sessionId = params?.sessionId ?? "session-1";
+    const transcriptPath = path.join(stateDir, "agents", agentId, "sessions", `${sessionId}.jsonl`);
+    replaceSqliteSessionTranscriptEvents({
+      agentId,
+      sessionId,
+      transcriptPath,
+      events: [
+        {
+          type: "message",
+          message: { role: "user", content: params?.content ?? "hello" },
+        },
+      ],
+    });
+    return transcriptPath;
+  }
+
   beforeAll(async () => {
     fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "qmd-manager-test-fixtures-"));
   });
@@ -207,7 +227,7 @@ describe("QmdMemoryManager", () => {
     spawnMock.mockClear();
     spawnMock.mockImplementation(() => createMockChild());
     watchMock.mockClear();
-    withFileLockMock.mockClear();
+    withOpenClawStateLockMock.mockClear();
     logWarnMock.mockClear();
     logDebugMock.mockClear();
     logInfoMock.mockClear();
@@ -261,6 +281,8 @@ describe("QmdMemoryManager", () => {
       }),
     );
     openManagers.clear();
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
     embedStartupJitterSpy?.mockRestore();
     embedStartupJitterSpy = null;
     vi.useRealTimers();
@@ -3622,7 +3644,7 @@ describe("QmdMemoryManager", () => {
     await manager.close();
   });
 
-  it("serializes qmd embeds within a process before taking the shared file lock", async () => {
+  it("serializes qmd embeds within a process before taking the SQLite state lock", async () => {
     vi.useFakeTimers();
     cfg = {
       ...cfg,
@@ -3651,7 +3673,7 @@ describe("QmdMemoryManager", () => {
     const firstSync = first.manager.sync({ reason: "manual", force: true });
     await vi.advanceTimersByTimeAsync(0);
     expect(embedChildren).toHaveLength(1);
-    expect(withFileLockMock).toHaveBeenCalledWith(
+    expect(withOpenClawStateLockMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
         retries: expect.objectContaining({
@@ -3662,7 +3684,7 @@ describe("QmdMemoryManager", () => {
       }),
       expect.any(Function),
     );
-    const lockOptions = withFileLockMock.mock.calls[0]?.[1] as {
+    const lockOptions = withOpenClawStateLockMock.mock.calls[0]?.[1] as {
       retries: { retries: number };
       stale: number;
     };
@@ -3698,13 +3720,7 @@ describe("QmdMemoryManager", () => {
       },
     } as OpenClawConfig;
 
-    const sessionsDir = path.join(stateDir, "agents", agentId, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
-    await fs.writeFile(
-      path.join(sessionsDir, "session-1.jsonl"),
-      '{"type":"message","message":{"role":"user","content":"hello"}}\n',
-      "utf-8",
-    );
+    seedSessionTranscript();
 
     const firstEntered = createDeferred<void>();
     const releaseFirst = createDeferred<void>();
@@ -3768,13 +3784,7 @@ describe("QmdMemoryManager", () => {
       },
     } as OpenClawConfig;
 
-    const sessionsDir = path.join(stateDir, "agents", agentId, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
-    await fs.writeFile(
-      path.join(sessionsDir, "session-1.jsonl"),
-      '{"type":"message","message":{"role":"user","content":"hello"}}\n',
-      "utf-8",
-    );
+    seedSessionTranscript();
 
     const firstEntered = createDeferred<void>();
     const releaseFirst = createDeferred<void>();
@@ -4113,15 +4123,8 @@ describe("QmdMemoryManager", () => {
   });
 
   it("reuses exported session markdown files when inputs are unchanged", async () => {
-    const sessionsDir = path.join(stateDir, "agents", agentId, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
-    const sessionFile = path.join(sessionsDir, "session-1.jsonl");
     const exportFile = path.join(stateDir, "agents", agentId, "qmd", "sessions", "session-1.md");
-    await fs.writeFile(
-      sessionFile,
-      '{"type":"message","message":{"role":"user","content":"hello"}}\n',
-      "utf-8",
-    );
+    seedSessionTranscript();
 
     const currentMemory = cfg.memory;
     cfg = {

@@ -290,12 +290,9 @@ export async function handleIrcInbound(params: {
   });
 
   const fromLabel = message.isGroup ? message.target : senderDisplay;
-  const storePath = core.channel.session.resolveStorePath(config.session?.store, {
-    agentId: route.agentId,
-  });
   const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(config as OpenClawConfig);
   const previousTimestamp = core.channel.session.readSessionUpdatedAt({
-    storePath,
+    agentId: route.agentId,
     sessionKey: route.sessionKey,
   });
   const body = core.channel.reply.formatAgentEnvelope({
@@ -340,7 +337,6 @@ export async function handleIrcInbound(params: {
     channel: CHANNEL_ID,
     accountId: account.accountId,
     route,
-    storePath,
     ctxPayload,
     core,
     deliver: async (payload) => {

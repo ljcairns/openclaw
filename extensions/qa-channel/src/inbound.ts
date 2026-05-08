@@ -96,11 +96,8 @@ export async function handleQaInbound(params: {
         ),
       )
     : undefined;
-  const storePath = runtime.channel.session.resolveStorePath(params.config.session?.store, {
-    agentId: route.agentId,
-  });
   const previousTimestamp = runtime.channel.session.readSessionUpdatedAt({
-    storePath,
+    agentId: route.agentId,
     sessionKey: route.sessionKey,
   });
   const body = runtime.channel.reply.formatAgentEnvelope({
@@ -156,7 +153,6 @@ export async function handleQaInbound(params: {
     channel: params.channelId,
     accountId: params.account.accountId,
     route,
-    storePath,
     ctxPayload,
     core: runtime,
     deliver: async (payload) => {

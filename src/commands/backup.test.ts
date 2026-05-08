@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { createTempHomeEnv, type TempHomeEnv } from "../test-utils/temp-home.js";
 import * as backupShared from "./backup-shared.js";
@@ -274,6 +275,74 @@ describe("backup commands", () => {
       await fs.rm(externalWorkspace, { recursive: true, force: true });
       await fs.rm(backupDir, { recursive: true, force: true });
     }
+  });
+
+  it("snapshots SQLite databases instead of archiving live WAL sidecars", async () => {
+    const stateDir = path.join(tempHome.home, ".openclaw");
+    const sqliteDir = path.join(stateDir, "state");
+    const sqlitePath = path.join(sqliteDir, "openclaw.sqlite");
+    await fs.mkdir(sqliteDir, { recursive: true });
+    await fs.writeFile(path.join(stateDir, "openclaw.json"), JSON.stringify({}), "utf8");
+    const sqlite = requireNodeSqlite();
+    const db = new sqlite.DatabaseSync(sqlitePath);
+    try {
+      db.exec(`
+        CREATE TABLE sample (value TEXT NOT NULL);
+        INSERT INTO sample (value) VALUES ('snapshot-ok');
+      `);
+    } finally {
+      db.close();
+    }
+    await fs.writeFile(`${sqlitePath}-wal`, "live wal", "utf8");
+    await fs.writeFile(`${sqlitePath}-shm`, "live shm", "utf8");
+    await mockStateOnlyBackupPlan(stateDir);
+
+    let capturedManifest: {
+      databaseSnapshots?: Array<{ sourcePath: string; archivePath: string; integrity: string }>;
+    } | null = null;
+    tarCreateMock.mockImplementationOnce(
+      async (options: { file: string }, entryPaths: string[]) => {
+        const manifestPath = entryPaths[0];
+        expect(manifestPath).toBeTruthy();
+        capturedManifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
+          databaseSnapshots?: Array<{ sourcePath: string; archivePath: string; integrity: string }>;
+        };
+        const stagedStatePath = entryPaths.find((entryPath) =>
+          entryPath.endsWith("state-snapshot"),
+        );
+        expect(stagedStatePath).toBeTruthy();
+        const stagedSqlitePath = path.join(stagedStatePath!, "state", "openclaw.sqlite");
+        await expect(fs.access(stagedSqlitePath)).resolves.toBeUndefined();
+        await expect(fs.access(`${stagedSqlitePath}-wal`)).rejects.toThrow();
+        await expect(fs.access(`${stagedSqlitePath}-shm`)).rejects.toThrow();
+
+        const snapshotDb = new sqlite.DatabaseSync(stagedSqlitePath, { readOnly: true });
+        try {
+          const row = snapshotDb.prepare("SELECT value FROM sample").get() as
+            | { value?: string }
+            | undefined;
+          expect(row?.value).toBe("snapshot-ok");
+        } finally {
+          snapshotDb.close();
+        }
+        await fs.writeFile(options.file, "archive-bytes", "utf8");
+      },
+    );
+
+    const runtime = createBackupTestRuntime();
+    const result = await backupCreateCommand(runtime, { includeWorkspace: false });
+    const stateAsset = result.assets.find((asset) => asset.kind === "state");
+
+    const manifest = capturedManifest as {
+      databaseSnapshots?: Array<{ sourcePath: string; archivePath: string; integrity: string }>;
+    } | null;
+    expect(manifest?.databaseSnapshots).toEqual([
+      expect.objectContaining({
+        sourcePath: path.join(stateAsset!.sourcePath, "state", "openclaw.sqlite"),
+        archivePath: path.posix.join(stateAsset!.archivePath, "state/openclaw.sqlite"),
+        integrity: "ok",
+      }),
+    ]);
   });
 
   it("rejects output paths that would be created inside a backed-up directory", async () => {

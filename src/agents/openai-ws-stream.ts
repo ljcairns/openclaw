@@ -46,7 +46,6 @@ import {
   convertMessagesToInputItems,
   convertResponseToInputItems,
   convertTools,
-  planTurnInput,
 } from "./openai-ws-message-conversion.js";
 import {
   buildOpenAIWebSocketResponseCreatePayload,

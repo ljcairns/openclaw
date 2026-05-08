@@ -10,6 +10,7 @@ import {
   addSubagentRunForTests,
   resetSubagentRegistryForTests,
 } from "../../agents/subagent-registry.js";
+import { replaceSqliteSessionTranscriptEvents } from "../../config/sessions/transcript-store.sqlite.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
 import {
   completeTaskRunByRunId,
@@ -59,7 +60,6 @@ async function buildStatusReplyForTest(params: { sessionKey?: string; verbose?: 
     sessionKey,
     parentSessionKey: sessionKey,
     sessionScope: commandParams.sessionScope,
-    storePath: commandParams.storePath,
     provider: "anthropic",
     model: "claude-opus-4-6",
     contextTokens: 0,
@@ -105,7 +105,7 @@ function writeTranscriptUsageLog(params: {
     totalTokens: number;
   };
 }) {
-  const logPath = path.join(
+  const transcriptPath = path.join(
     params.dir,
     ".openclaw",
     "agents",
@@ -113,19 +113,21 @@ function writeTranscriptUsageLog(params: {
     "sessions",
     `${params.sessionId}.jsonl`,
   );
-  fs.mkdirSync(path.dirname(logPath), { recursive: true });
-  fs.writeFileSync(
-    logPath,
-    JSON.stringify({
-      type: "message",
-      message: {
-        role: "assistant",
-        model: "claude-opus-4-5",
-        usage: params.usage,
+  replaceSqliteSessionTranscriptEvents({
+    agentId: params.agentId,
+    sessionId: params.sessionId,
+    transcriptPath,
+    events: [
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          model: "claude-opus-4-5",
+          usage: params.usage,
+        },
       },
-    }),
-    "utf-8",
-  );
+    ],
+  });
 }
 
 describe("buildStatusReply subagent summary", () => {

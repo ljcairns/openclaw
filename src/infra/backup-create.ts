@@ -11,9 +11,11 @@ import {
   resolveBackupPlanFromDisk,
 } from "../commands/backup-shared.js";
 import { isPathWithin } from "../commands/cleanup-utils.js";
+import { recordOpenClawStateBackupRun } from "../state/openclaw-state-db.js";
 import { resolveHomeDir, resolveUserPath } from "../utils.js";
 import { resolveRuntimeServiceVersion } from "../version.js";
 import { writeJson } from "./json-files.js";
+import { requireNodeSqlite } from "./node-sqlite.js";
 
 type TarRuntime = typeof import("tar");
 
@@ -40,6 +42,15 @@ type BackupManifestAsset = {
   archivePath: string;
 };
 
+type BackupManifestDatabaseSnapshot = {
+  role: "global" | "agent" | "state";
+  agentId?: string;
+  sourcePath: string;
+  archivePath: string;
+  byteSize: number;
+  integrity: "ok";
+};
+
 type BackupManifest = {
   schemaVersion: 1;
   createdAt: string;
@@ -58,6 +69,7 @@ type BackupManifest = {
     workspaceDirs: string[];
   };
   assets: BackupManifestAsset[];
+  databaseSnapshots: BackupManifestDatabaseSnapshot[];
   skipped: Array<{
     kind: string;
     sourcePath: string;
@@ -207,6 +219,7 @@ function buildManifest(params: {
   configPath: string;
   oauthDir: string;
   workspaceDirs: string[];
+  databaseSnapshots?: BackupManifestDatabaseSnapshot[];
 }): BackupManifest {
   return {
     schemaVersion: 1,
@@ -230,6 +243,7 @@ function buildManifest(params: {
       sourcePath: asset.sourcePath,
       archivePath: asset.archivePath,
     })),
+    databaseSnapshots: params.databaseSnapshots ?? [],
     skipped: params.skipped.map((entry) => ({
       kind: entry.kind,
       sourcePath: entry.sourcePath,
@@ -270,10 +284,16 @@ function remapArchiveEntryPath(params: {
   entryPath: string;
   manifestPath: string;
   archiveRoot: string;
+  stagedAssets?: StagedBackupAssets;
 }): string {
   const normalizedEntry = path.resolve(params.entryPath);
   if (normalizedEntry === params.manifestPath) {
     return path.posix.join(params.archiveRoot, "manifest.json");
+  }
+  const stagedState = params.stagedAssets?.state;
+  if (stagedState && isPathWithin(normalizedEntry, stagedState.stagedPath)) {
+    const relative = path.relative(stagedState.stagedPath, normalizedEntry);
+    return path.posix.join(stagedState.asset.archivePath, relative.split(path.sep).join("/"));
   }
   return buildBackupArchivePath(params.archiveRoot, normalizedEntry);
 }
@@ -294,6 +314,145 @@ export function buildExtensionsNodeModulesFilter(stateDir: string): (filePath: s
 
     return !normalizedFilePath.slice(extensionsPrefix.length).split("/").includes("node_modules");
   };
+}
+
+type StagedBackupAssets = {
+  archivePaths: string[];
+  databaseSnapshots: BackupManifestDatabaseSnapshot[];
+  state?: {
+    asset: BackupAsset;
+    stagedPath: string;
+  };
+};
+
+function isSqliteSidecarPath(filePath: string): boolean {
+  return filePath.endsWith(".sqlite-wal") || filePath.endsWith(".sqlite-shm");
+}
+
+function isSqliteDatabasePath(filePath: string): boolean {
+  return filePath.endsWith(".sqlite");
+}
+
+function sqlStringLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+async function listSqliteDatabasePaths(root: string): Promise<string[]> {
+  const results: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    let entries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile() && isSqliteDatabasePath(fullPath)) {
+        results.push(fullPath);
+      }
+    }
+  }
+  await walk(root);
+  return results.toSorted();
+}
+
+function classifySqliteSnapshotRole(params: {
+  stateDir: string;
+  sqlitePath: string;
+}): Pick<BackupManifestDatabaseSnapshot, "role" | "agentId"> {
+  const relative = path.relative(params.stateDir, params.sqlitePath).split(path.sep).join("/");
+  if (relative === "state/openclaw.sqlite") {
+    return { role: "global" };
+  }
+  const agentMatch = relative.match(/^agents\/([^/]+)\/agent\/openclaw-agent\.sqlite$/u);
+  if (agentMatch?.[1]) {
+    return { role: "agent", agentId: agentMatch[1] };
+  }
+  return { role: "state" };
+}
+
+async function snapshotSqliteDatabase(params: {
+  sourcePath: string;
+  snapshotPath: string;
+}): Promise<{ byteSize: number }> {
+  await fs.mkdir(path.dirname(params.snapshotPath), { recursive: true });
+  await fs.rm(params.snapshotPath, { force: true });
+  const sqlite = requireNodeSqlite();
+  const db = new sqlite.DatabaseSync(params.sourcePath);
+  try {
+    try {
+      db.exec("PRAGMA wal_checkpoint(FULL);");
+    } catch {
+      // Best effort: VACUUM INTO still creates a consistent snapshot.
+    }
+    db.exec(`VACUUM INTO ${sqlStringLiteral(params.snapshotPath)};`);
+  } finally {
+    db.close();
+  }
+  const integrityDb = new sqlite.DatabaseSync(params.snapshotPath, { readOnly: true });
+  try {
+    const row = integrityDb.prepare("PRAGMA integrity_check").get() as
+      | { integrity_check?: string }
+      | undefined;
+    if (row?.integrity_check !== "ok") {
+      throw new Error(`SQLite integrity check failed for backup snapshot: ${params.sourcePath}`);
+    }
+  } finally {
+    integrityDb.close();
+  }
+  const stat = await fs.stat(params.snapshotPath);
+  return { byteSize: stat.size };
+}
+
+async function stageBackupAssets(params: {
+  assets: BackupAsset[];
+  tempDir: string;
+}): Promise<StagedBackupAssets> {
+  const archivePaths: string[] = [];
+  const databaseSnapshots: BackupManifestDatabaseSnapshot[] = [];
+  let stagedState: StagedBackupAssets["state"];
+
+  for (const asset of params.assets) {
+    if (asset.kind !== "state") {
+      archivePaths.push(asset.sourcePath);
+      continue;
+    }
+
+    const stagedPath = path.join(params.tempDir, "state-snapshot");
+    await fs.cp(asset.sourcePath, stagedPath, {
+      recursive: true,
+      verbatimSymlinks: true,
+      filter: (source) => !isSqliteDatabasePath(source) && !isSqliteSidecarPath(source),
+    });
+
+    for (const sqlitePath of await listSqliteDatabasePaths(asset.sourcePath)) {
+      const relative = path.relative(asset.sourcePath, sqlitePath);
+      const snapshotPath = path.join(stagedPath, relative);
+      const snapshot = await snapshotSqliteDatabase({
+        sourcePath: sqlitePath,
+        snapshotPath,
+      });
+      const role = classifySqliteSnapshotRole({
+        stateDir: asset.sourcePath,
+        sqlitePath,
+      });
+      databaseSnapshots.push({
+        ...role,
+        sourcePath: sqlitePath,
+        archivePath: path.posix.join(asset.archivePath, relative.split(path.sep).join("/")),
+        byteSize: snapshot.byteSize,
+        integrity: "ok",
+      });
+    }
+
+    stagedState = { asset, stagedPath };
+    archivePaths.push(stagedPath);
+  }
+
+  return { archivePaths, databaseSnapshots, state: stagedState };
 }
 
 export async function createBackupArchive(
@@ -354,8 +513,13 @@ export async function createBackupArchive(
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-backup-"));
   const manifestPath = path.join(tempDir, "manifest.json");
   const tempArchivePath = buildTempArchivePath(outputPath);
+  let manifest: BackupManifest | undefined;
   try {
-    const manifest = buildManifest({
+    const stagedAssets = await stageBackupAssets({
+      assets: result.assets,
+      tempDir,
+    });
+    manifest = buildManifest({
       createdAt,
       archiveRoot,
       includeWorkspace,
@@ -366,12 +530,14 @@ export async function createBackupArchive(
       configPath: plan.configPath,
       oauthDir: plan.oauthDir,
       workspaceDirs: plan.workspaceDirs,
+      databaseSnapshots: stagedAssets.databaseSnapshots,
     });
     await writeJson(manifestPath, manifest, { trailingNewline: true });
 
     const tar = await loadTarRuntime();
-    const stateAsset = result.assets.find((asset) => asset.kind === "state");
-    const filter = stateAsset ? buildExtensionsNodeModulesFilter(stateAsset.sourcePath) : undefined;
+    const filter = stagedAssets.state
+      ? buildExtensionsNodeModulesFilter(stagedAssets.state.stagedPath)
+      : undefined;
     await tar.c(
       {
         file: tempArchivePath,
@@ -384,12 +550,21 @@ export async function createBackupArchive(
             entryPath: entry.path,
             manifestPath,
             archiveRoot,
+            stagedAssets,
           });
         },
       },
-      [manifestPath, ...result.assets.map((asset) => asset.sourcePath)],
+      [manifestPath, ...stagedAssets.archivePaths],
     );
     await publishTempArchive({ tempArchivePath, outputPath });
+    if (manifest && result.assets.some((asset) => asset.kind === "state")) {
+      recordOpenClawStateBackupRun({
+        createdAt: nowMs,
+        archivePath: outputPath,
+        status: "completed",
+        manifest: manifest as unknown as Record<string, unknown>,
+      });
+    }
   } finally {
     await fs.rm(tempArchivePath, { force: true }).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);

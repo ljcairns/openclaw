@@ -1,17 +1,28 @@
 import { mkdirSync, statSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
+import {
+  closeOpenClawStateDatabaseForTest,
+  openOpenClawStateDatabase,
+} from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   closePluginStateSqliteStore,
   createCorePluginStateKeyedStore,
   createPluginStateKeyedStore,
+  importLegacyPluginStateSidecarToSqlite,
+  legacyPluginStateSidecarExists,
   PluginStateStoreError,
   probePluginStateStore,
   resetPluginStateStoreForTests,
   sweepExpiredPluginStateEntries,
 } from "./plugin-state-store.js";
-import { resolvePluginStateDir, resolvePluginStateSqlitePath } from "./plugin-state-store.paths.js";
+import {
+  resolveLegacyPluginStateDir,
+  resolveLegacyPluginStateSqlitePath,
+  resolvePluginStateDir,
+  resolvePluginStateSqlitePath,
+} from "./plugin-state-store.paths.js";
 import { seedPluginStateEntriesForTests } from "./plugin-state-store.test-helpers.js";
 
 afterEach(() => {
@@ -159,7 +170,7 @@ describe("plugin state keyed store", () => {
     });
   });
 
-  it("registerIfAbsent preserves eviction and plugin row cap behavior", async () => {
+  it("registerIfAbsent preserves namespace eviction behavior", async () => {
     await withOpenClawTestState({ label: "plugin-state-register-if-absent-limits" }, async () => {
       vi.useFakeTimers();
       const evicting = createPluginStateKeyedStore<number>("discord", {
@@ -173,29 +184,6 @@ describe("plugin state keyed store", () => {
       vi.setSystemTime(3000);
       await evicting.registerIfAbsent("c", 3);
       await expect(evicting.entries()).resolves.toMatchObject([{ key: "b" }, { key: "c" }]);
-
-      seedPluginStateEntriesForTests([
-        ...Array.from({ length: 999 }, (_, entryIndex) => ({
-          pluginId: "limited-plugin",
-          namespace: "limit",
-          key: `k-${entryIndex}`,
-          value: { entryIndex },
-        })),
-        {
-          pluginId: "limited-plugin",
-          namespace: "sibling",
-          key: "k-0",
-          value: { sibling: true },
-        },
-      ]);
-      const limited = createPluginStateKeyedStore("limited-plugin", {
-        namespace: "limit",
-        maxEntries: 1_001,
-      });
-      await expect(limited.registerIfAbsent("overflow", { overflow: true })).rejects.toMatchObject({
-        code: "PLUGIN_STATE_LIMIT_EXCEEDED",
-      });
-      await expect(limited.lookup("overflow")).resolves.toBeUndefined();
     });
   });
 
@@ -300,10 +288,10 @@ describe("plugin state keyed store", () => {
     });
   });
 
-  it("rejects when the per-plugin live row ceiling would be exceeded without evicting siblings", async () => {
-    await withOpenClawTestState({ label: "plugin-state-plugin-limit" }, async () => {
+  it("keeps sibling namespaces while applying the active namespace cap", async () => {
+    await withOpenClawTestState({ label: "plugin-state-namespace-limit" }, async () => {
       seedPluginStateEntriesForTests([
-        ...Array.from({ length: 999 }, (_, entryIndex) => ({
+        ...Array.from({ length: 3 }, (_, entryIndex) => ({
           pluginId: "discord",
           namespace: "limit",
           key: `k-${entryIndex}`,
@@ -319,21 +307,20 @@ describe("plugin state keyed store", () => {
 
       const limitStore = createPluginStateKeyedStore("discord", {
         namespace: "limit",
-        maxEntries: 1_001,
+        maxEntries: 3,
       });
       const siblingStore = createPluginStateKeyedStore("discord", {
         namespace: "sibling",
         maxEntries: 10,
       });
 
-      await expect(limitStore.register("overflow", { overflow: true })).rejects.toMatchObject({
-        code: "PLUGIN_STATE_LIMIT_EXCEEDED",
-      });
+      await expect(limitStore.register("overflow", { overflow: true })).resolves.toBeUndefined();
       await expect(siblingStore.lookup("k-0")).resolves.toEqual({
         namespaceIndex: 1,
         entryIndex: 0,
       });
-      await expect(limitStore.lookup("overflow")).resolves.toBeUndefined();
+      await expect(limitStore.lookup("overflow")).resolves.toEqual({ overflow: true });
+      await expect(limitStore.lookup("k-0")).resolves.toBeUndefined();
     });
   });
 
@@ -451,6 +438,30 @@ describe("plugin state keyed store", () => {
     });
   });
 
+  it("reopens after the shared state DB cache closes its handle", async () => {
+    await withOpenClawTestState({ label: "plugin-state-cache-primary" }, async (primary) => {
+      await withOpenClawTestState(
+        { label: "plugin-state-cache-secondary", applyEnv: false },
+        async (secondary) => {
+          const store = createPluginStateKeyedStore("discord", {
+            namespace: "cache-switch",
+            maxEntries: 10,
+          });
+          await store.register("k", { ok: true });
+
+          openOpenClawStateDatabase({ env: secondary.env });
+
+          try {
+            vi.stubEnv("OPENCLAW_STATE_DIR", primary.stateDir);
+            await expect(store.lookup("k")).resolves.toEqual({ ok: true });
+          } finally {
+            vi.unstubAllEnvs();
+          }
+        },
+      );
+    });
+  });
+
   it.runIf(process.platform !== "win32")("hardens DB directory and file permissions", async () => {
     await withOpenClawTestState({ label: "plugin-state-permissions" }, async () => {
       const store = createPluginStateKeyedStore("discord", { namespace: "perms", maxEntries: 10 });
@@ -467,6 +478,7 @@ describe("plugin state keyed store", () => {
       expect(result.ok).toBe(true);
       const failedSteps = result.steps.filter((step) => !step.ok);
       expect(failedSteps).toEqual([]);
+      expect(result.dbPath).toContain("openclaw.sqlite");
       expect(JSON.stringify(result)).not.toContain("probe-value");
     });
   });
@@ -476,13 +488,62 @@ describe("plugin state keyed store", () => {
       mkdirSync(resolvePluginStateDir(), { recursive: true });
       const { DatabaseSync } = requireNodeSqlite();
       const db = new DatabaseSync(resolvePluginStateSqlitePath());
-      db.exec("PRAGMA user_version = 2;");
+      db.exec("PRAGMA user_version = 99;");
       db.close();
+      closeOpenClawStateDatabaseForTest();
 
       const store = createPluginStateKeyedStore("discord", { namespace: "schema", maxEntries: 10 });
       await expect(store.register("k", { ok: true })).rejects.toMatchObject({
         code: "PLUGIN_STATE_SCHEMA_UNSUPPORTED",
       });
+    });
+  });
+
+  it("imports legacy plugin-state sidecar into the shared database", async () => {
+    await withOpenClawTestState({ label: "plugin-state-legacy-import" }, async () => {
+      mkdirSync(resolveLegacyPluginStateDir(), { recursive: true });
+      const { DatabaseSync } = requireNodeSqlite();
+      const legacyPath = resolveLegacyPluginStateSqlitePath();
+      const db = new DatabaseSync(legacyPath);
+      db.exec(`
+        CREATE TABLE plugin_state_entries (
+          plugin_id  TEXT    NOT NULL,
+          namespace  TEXT    NOT NULL,
+          entry_key  TEXT    NOT NULL,
+          value_json TEXT    NOT NULL,
+          created_at INTEGER NOT NULL,
+          expires_at INTEGER,
+          PRIMARY KEY (plugin_id, namespace, entry_key)
+        );
+      `);
+      db.prepare(
+        `
+          INSERT INTO plugin_state_entries (
+            plugin_id,
+            namespace,
+            entry_key,
+            value_json,
+            created_at,
+            expires_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `,
+      ).run("legacy-plugin", "claims", "claim-1", JSON.stringify({ ok: true }), 123, null);
+      db.close();
+
+      expect(legacyPluginStateSidecarExists()).toBe(true);
+      const result = importLegacyPluginStateSidecarToSqlite();
+
+      expect(result).toMatchObject({
+        sourcePath: legacyPath,
+        importedEntries: 1,
+        removedSource: true,
+      });
+      expect(legacyPluginStateSidecarExists()).toBe(false);
+      const store = createPluginStateKeyedStore<{ ok: boolean }>("legacy-plugin", {
+        namespace: "claims",
+        maxEntries: 10,
+      });
+      await expect(store.lookup("claim-1")).resolves.toEqual({ ok: true });
     });
   });
 });

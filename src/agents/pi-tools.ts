@@ -626,29 +626,7 @@ export function createOpenClawCodingTools(options?: {
             modelContextWindowTokens: options?.modelContextWindowTokens,
             imageSanitization,
           });
-          base.push(
-            workspaceOnly
-              ? wrapToolWorkspaceRootGuardWithOptions(sandboxed, sandboxRoot, {
-                  containerWorkdir: sandbox.containerWorkdir,
-                })
-              : sandboxed,
-          );
-          continue;
-        }
-        const freshReadTool = createReadTool(workspaceRoot);
-        const wrapped = createOpenClawReadTool(freshReadTool, {
-          modelContextWindowTokens: options?.modelContextWindowTokens,
-          imageSanitization,
-        });
-        base.push(workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, workspaceRoot) : wrapped);
-        continue;
-      }
-      if (tool.name === "bash" || tool.name === execToolName) {
-        continue;
-      }
-      if (tool.name === "write") {
-        if (sandboxRoot) {
-          continue;
+          return [workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, workspaceRoot) : wrapped];
         }
         if (tool.name === "write") {
           if (virtualScratch) {
@@ -669,6 +647,9 @@ export function createOpenClawCodingTools(options?: {
           }
           const wrapped = createHostWorkspaceEditTool(workspaceRoot, { workspaceOnly });
           return [workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, workspaceRoot) : wrapped];
+        }
+        if (tool.name === "bash" || tool.name === execToolName) {
+          return [];
         }
         return [tool];
       })

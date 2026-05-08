@@ -8,11 +8,9 @@ import { deriveContextPromptTokens, hasNonzeroUsage, normalizeUsage } from "../.
 import { enqueueCommitmentExtraction } from "../../commitments/runtime.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
-  loadSessionStore,
   resolveSessionPluginStatusLines,
   resolveSessionPluginTraceLines,
   type SessionEntry,
-  updateSessionStoreEntry,
 } from "../../config/sessions.js";
 import {
   hasSqliteSessionTranscriptEvents,
@@ -92,6 +90,7 @@ import {
   type ReplyOperation,
 } from "./reply-run-registry.js";
 import { createReplyToModeFilterForChannel, resolveReplyToMode } from "./reply-threading.js";
+import { readSessionEntryRow, writeSessionEntryRow } from "./session-row-patch.js";
 import { incrementRunCompactionCount, persistRunSessionUsage } from "./session-run-accounting.js";
 import { resolveSourceReplyVisibilityPolicy } from "./source-reply-delivery-mode.js";
 import { createTypingSignaler } from "./typing-mode.js";
@@ -875,24 +874,23 @@ function enqueueCommitmentExtractionForTurn(params: {
   });
 }
 
-function refreshSessionEntryFromStore(params: {
-  storePath?: string;
+function refreshSessionEntryFromRows(params: {
   sessionKey?: string;
   fallbackEntry?: SessionEntry;
   activeSessionStore?: Record<string, SessionEntry>;
 }): SessionEntry | undefined {
-  const { storePath, sessionKey, fallbackEntry, activeSessionStore } = params;
-  if (!storePath || !sessionKey) {
+  const { sessionKey, fallbackEntry, activeSessionStore } = params;
+  if (!sessionKey) {
     return fallbackEntry;
   }
   try {
-    const latestStore = loadSessionStore(storePath);
-    const latestEntry = latestStore?.[sessionKey];
+    const latestEntry = readSessionEntryRow({
+      sessionKey,
+      fallbackEntry,
+      sessionStore: activeSessionStore,
+    });
     if (!latestEntry) {
       return fallbackEntry;
-    }
-    if (activeSessionStore) {
-      activeSessionStore[sessionKey] = latestEntry;
     }
     return latestEntry;
   } catch {
@@ -917,7 +915,6 @@ export async function runReplyAgent(params: {
   sessionStore?: Record<string, SessionEntry>;
   sessionKey?: string;
   runtimePolicySessionKey?: string;
-  storePath?: string;
   defaultModel: string;
   agentCfgContextTokens?: number;
   resolvedVerboseLevel: VerboseLevel;
@@ -955,7 +952,6 @@ export async function runReplyAgent(params: {
     sessionStore,
     sessionKey,
     runtimePolicySessionKey,
-    storePath,
     defaultModel,
     agentCfgContextTokens,
     resolvedVerboseLevel,
@@ -1003,12 +999,10 @@ export async function runReplyAgent(params: {
 
   const shouldEmitToolResult = createShouldEmitToolResult({
     sessionKey,
-    storePath,
     resolvedVerboseLevel,
   });
   const shouldEmitToolOutput = createShouldEmitToolOutput({
     sessionKey,
-    storePath,
     resolvedVerboseLevel,
   });
 
@@ -1021,13 +1015,12 @@ export async function runReplyAgent(params: {
     const updatedAt = Date.now();
     activeSessionEntry.updatedAt = updatedAt;
     activeSessionStore[sessionKey] = activeSessionEntry;
-    if (storePath) {
-      await updateSessionStoreEntry({
-        storePath,
-        sessionKey,
-        update: async () => ({ updatedAt }),
-      });
-    }
+    await writeSessionEntryRow({
+      sessionKey,
+      fallbackEntry: activeSessionEntry,
+      sessionStore: activeSessionStore,
+      update: async () => ({ updatedAt }),
+    });
   };
 
   if (effectiveShouldSteer && isStreaming) {
@@ -1060,7 +1053,6 @@ export async function runReplyAgent(params: {
     sessionEntry: activeSessionEntry,
     sessionStore: activeSessionStore,
     sessionKey,
-    storePath,
     defaultModel,
     agentCfgContextTokens,
   });
@@ -1192,7 +1184,6 @@ export async function runReplyAgent(params: {
         sessionStore: activeSessionStore,
         sessionKey,
         runtimePolicySessionKey,
-        storePath,
         isHeartbeat,
         replyOperation,
       }),
@@ -1214,7 +1205,6 @@ export async function runReplyAgent(params: {
         sessionStore: activeSessionStore,
         sessionKey,
         runtimePolicySessionKey,
-        storePath,
         isHeartbeat,
         replyOperation,
       }),
@@ -1227,7 +1217,6 @@ export async function runReplyAgent(params: {
       sessionEntry: activeSessionEntry,
       sessionStore: activeSessionStore,
       sessionKey,
-      storePath,
       defaultModel,
       agentCfgContextTokens,
     });
@@ -1236,24 +1225,20 @@ export async function runReplyAgent(params: {
     type SessionResetOptions = {
       failureLabel: string;
       buildLogMessage: (nextSessionId: string) => string;
-      cleanupTranscripts?: boolean;
     };
     const resetSession = async ({
       failureLabel,
       buildLogMessage,
-      cleanupTranscripts,
     }: SessionResetOptions): Promise<boolean> =>
       await resetReplyRunSession({
         options: {
           failureLabel,
           buildLogMessage,
-          cleanupTranscripts,
         },
         sessionKey,
         queueKey,
         activeSessionEntry,
         activeSessionStore,
-        storePath,
         messageThreadId:
           typeof sessionCtx.MessageThreadId === "string" ? sessionCtx.MessageThreadId : undefined,
         followupRun,
@@ -1275,7 +1260,6 @@ export async function runReplyAgent(params: {
         failureLabel: "role ordering conflict",
         buildLogMessage: (nextSessionId) =>
           `Role ordering conflict (${reason}). Restarting session ${sessionKey} -> ${nextSessionId}.`,
-        cleanupTranscripts: true,
       });
 
     replyOperation.setPhase("running");
@@ -1305,7 +1289,6 @@ export async function runReplyAgent(params: {
         runtimePolicySessionKey,
         getActiveSessionEntry: () => activeSessionEntry,
         activeSessionStore,
-        storePath,
         resolvedVerboseLevel,
         toolProgressDetail,
         replyMediaContext,
@@ -1340,16 +1323,15 @@ export async function runReplyAgent(params: {
       activeSessionEntry.groupActivationNeedsSystemIntro = false;
       activeSessionEntry.updatedAt = updatedAt;
       activeSessionStore[sessionKey] = activeSessionEntry;
-      if (storePath) {
-        await updateSessionStoreEntry({
-          storePath,
-          sessionKey,
-          update: async () => ({
-            groupActivationNeedsSystemIntro: false,
-            updatedAt,
-          }),
-        });
-      }
+      await writeSessionEntryRow({
+        sessionKey,
+        fallbackEntry: activeSessionEntry,
+        sessionStore: activeSessionStore,
+        update: async () => ({
+          groupActivationNeedsSystemIntro: false,
+          updatedAt,
+        }),
+      });
     }
 
     const payloadArray = runResult.payloads ?? [];
@@ -1394,10 +1376,11 @@ export async function runReplyAgent(params: {
       if (sessionKey && fallbackStateEntry && activeSessionStore) {
         activeSessionStore[sessionKey] = fallbackStateEntry;
       }
-      if (sessionKey && storePath) {
-        await updateSessionStoreEntry({
-          storePath,
+      if (sessionKey) {
+        await writeSessionEntryRow({
           sessionKey,
+          fallbackEntry: fallbackStateEntry,
+          sessionStore: activeSessionStore,
           update: async () => ({
             fallbackNoticeSelectedModel: fallbackTransition.nextState.selectedModel,
             fallbackNoticeActiveModel: fallbackTransition.nextState.activeModel,
@@ -1431,7 +1414,6 @@ export async function runReplyAgent(params: {
       DEFAULT_CONTEXT_TOKENS;
 
     await persistRunSessionUsage({
-      storePath,
       sessionKey,
       cfg,
       usage,
@@ -1600,8 +1582,7 @@ export async function runReplyAgent(params: {
     }
 
     if (verboseEnabled) {
-      activeSessionEntry = refreshSessionEntryFromStore({
-        storePath,
+      activeSessionEntry = refreshSessionEntryFromRows({
         sessionKey,
         fallbackEntry: activeSessionEntry,
         activeSessionStore,
@@ -1677,7 +1658,6 @@ export async function runReplyAgent(params: {
         sessionEntry: activeSessionEntry,
         sessionStore: activeSessionStore,
         sessionKey,
-        storePath,
         amount: autoCompactionCount,
         compactionTokensAfter: runResult.meta?.agentMeta?.compactionTokensAfter,
         lastCallUsage: runResult.meta?.agentMeta?.lastCallUsage,
@@ -1865,10 +1845,10 @@ export async function runReplyAgent(params: {
       finalPayloads = markBeforeAgentRunBlockedPayloads(finalPayloads);
     }
 
-    // Capture only policy-visible final payloads in session store to support
+    // Capture only policy-visible final payloads in the SQLite session row to support
     // durable delivery retries. Hidden reasoning, message-tool-only replies,
     // and sendPolicy-denied replies must not become heartbeat-replayable text.
-    if (sessionKey && storePath && finalPayloads.length > 0) {
+    if (sessionKey && finalPayloads.length > 0) {
       const sendPolicy = resolveSendPolicy({
         cfg,
         entry: activeSessionEntry,
@@ -1890,9 +1870,10 @@ export async function runReplyAgent(params: {
         ? ""
         : buildPendingFinalDeliveryText(finalPayloads);
       if (pendingText) {
-        await updateSessionStoreEntry({
-          storePath,
+        await writeSessionEntryRow({
           sessionKey,
+          fallbackEntry: activeSessionEntry,
+          sessionStore: activeSessionStore,
           update: async () => ({
             pendingFinalDelivery: true,
             pendingFinalDeliveryText: pendingText,

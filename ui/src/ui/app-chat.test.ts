@@ -116,7 +116,7 @@ function makeHost(overrides?: Partial<ChatHost>): ChatHost {
 function createSessionsResult(sessions: GatewaySessionRow[]): SessionsListResult {
   return {
     ts: 0,
-    path: "",
+    databasePath: "",
     count: sessions.length,
     defaults: { modelProvider: null, model: null, contextTokens: null },
     sessions,
@@ -1022,7 +1022,7 @@ describe("handleSendChat", () => {
       if (method === "sessions.list") {
         return {
           ts: 0,
-          path: "",
+          databasePath: "",
           count: 0,
           defaults: { modelProvider: "openai", model: "gpt-5", contextTokens: null },
           sessions: [],

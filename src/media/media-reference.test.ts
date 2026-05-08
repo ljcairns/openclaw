@@ -9,6 +9,7 @@ import {
   resolveInboundMediaReference,
   resolveMediaReferenceLocalPath,
 } from "./media-reference.js";
+import { saveMediaBuffer } from "./store.js";
 
 describe("media reference helpers", () => {
   it("normalizes outbound MEDIA tags without changing canonical media URIs", () => {
@@ -41,66 +42,42 @@ describe("media reference helpers", () => {
   });
 
   it("resolves canonical inbound media URIs", async () => {
-    const stateDir = resolveStateDir();
-    const id = `ref-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
-    const filePath = path.join(stateDir, "media", "inbound", id);
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, Buffer.from("png"));
-    const realFilePath = await fs.realpath(filePath);
+    const saved = await saveMediaBuffer(Buffer.from("png"), "image/png");
 
-    try {
-      await expect(resolveInboundMediaReference(`media://inbound/${id}`)).resolves.toMatchObject({
-        id,
-        normalizedSource: `media://inbound/${id}`,
-        physicalPath: realFilePath,
-        sourceType: "uri",
-      });
-    } finally {
-      await fs.rm(filePath, { force: true });
-    }
+    await expect(
+      resolveInboundMediaReference(`media://inbound/${saved.id}`),
+    ).resolves.toMatchObject({
+      id: saved.id,
+      normalizedSource: `media://inbound/${saved.id}`,
+      physicalPath: saved.path,
+      sourceType: "uri",
+    });
   });
 
   it("maps canonical inbound media URIs to local paths for direct file readers", async () => {
-    const stateDir = resolveStateDir();
-    const id = `ref-local-path-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
-    const filePath = path.join(stateDir, "media", "inbound", id);
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, Buffer.from("png"));
-    const realFilePath = await fs.realpath(filePath);
+    const saved = await saveMediaBuffer(Buffer.from("png"), "image/png");
 
-    try {
-      await expect(resolveMediaReferenceLocalPath(`media://inbound/${id}`)).resolves.toBe(
-        realFilePath,
-      );
-      await expect(resolveMediaReferenceLocalPath("  MEDIA: ./out.png")).resolves.toBe("./out.png");
-    } finally {
-      await fs.rm(filePath, { force: true });
-    }
+    await expect(resolveMediaReferenceLocalPath(`media://inbound/${saved.id}`)).resolves.toBe(
+      saved.path,
+    );
+    await expect(resolveMediaReferenceLocalPath("  MEDIA: ./out.png")).resolves.toBe("./out.png");
   });
 
   it("resolves direct absolute paths only for first-level inbound media files", async () => {
     const stateDir = resolveStateDir();
-    const id = `ref-path-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
-    const filePath = path.join(stateDir, "media", "inbound", id);
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, Buffer.from("png"));
-    const realFilePath = await fs.realpath(filePath);
+    const saved = await saveMediaBuffer(Buffer.from("png"), "image/png");
 
-    try {
-      await expect(resolveInboundMediaReference(filePath)).resolves.toMatchObject({
-        id,
-        physicalPath: realFilePath,
-        sourceType: "path",
-      });
-      await expect(
-        resolveInboundMediaReference(path.join(stateDir, "media", "inbound", "nested", id)),
-      ).resolves.toBeNull();
-      await expect(
-        resolveInboundMediaReference(path.join(stateDir, "media", "outbound", id)),
-      ).resolves.toBeNull();
-    } finally {
-      await fs.rm(filePath, { force: true });
-    }
+    await expect(resolveInboundMediaReference(saved.path)).resolves.toMatchObject({
+      id: saved.id,
+      physicalPath: saved.path,
+      sourceType: "path",
+    });
+    await expect(
+      resolveInboundMediaReference(path.join(stateDir, "media", "inbound", "nested", saved.id)),
+    ).resolves.toBeNull();
+    await expect(
+      resolveInboundMediaReference(path.join(stateDir, "media", "outbound", saved.id)),
+    ).resolves.toBeNull();
   });
 
   it("rejects inbound media URIs with unsupported locations or unsafe ids", async () => {

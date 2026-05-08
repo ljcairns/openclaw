@@ -221,7 +221,7 @@ async function deliverQueuedSessionDelivery(params: {
   deps: CliDeps;
   entry: QueuedSessionDelivery;
 }) {
-  const { cfg, storePath, canonicalKey } = loadSessionEntry(params.entry.sessionKey);
+  const { cfg, canonicalKey } = loadSessionEntry(params.entry.sessionKey);
   const queuedDeliveryContext = resolveQueuedSessionDeliveryContext(params.entry);
 
   if (params.entry.kind === "systemEvent") {
@@ -278,7 +278,6 @@ async function deliverQueuedSessionDelivery(params: {
     accountId: route.accountId,
     agentId,
     routeSessionKey: canonicalKey,
-    storePath,
     ctxPayload: finalizeInboundContext(
       {
         Body: userMessage,

@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   closePluginStateSqliteStore,
@@ -11,8 +12,6 @@ import {
   sweepExpiredPluginStateEntries,
 } from "./plugin-state-store.js";
 import { resolvePluginStateDir, resolvePluginStateSqlitePath } from "./plugin-state-store.paths.js";
-import { MAX_PLUGIN_STATE_ENTRIES_PER_PLUGIN } from "./plugin-state-store.sqlite.js";
-import { seedPluginStateEntriesForTests } from "./plugin-state-store.test-helpers.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -180,36 +179,6 @@ describe("limits", () => {
     });
   });
 
-  it("enforces the per-plugin live-row cap", async () => {
-    await withOpenClawTestState({ label: "e2e-limit-plugin" }, async () => {
-      // Spread MAX_ENTRIES_PER_PLUGIN rows across several namespaces so
-      // namespace eviction never fires (each namespace has generous room).
-      const nsCount = 10;
-      const perNs = MAX_PLUGIN_STATE_ENTRIES_PER_PLUGIN / nsCount; // 100
-      seedPluginStateEntriesForTests(
-        Array.from({ length: MAX_PLUGIN_STATE_ENTRIES_PER_PLUGIN }, (_, index) => {
-          const ns = Math.floor(index / perNs);
-          const k = index % perNs;
-          return {
-            pluginId: "fixture-plugin",
-            namespace: `ns-${ns}`,
-            key: `k-${k}`,
-            value: { ns, k },
-          };
-        }),
-      );
-      const store = createPluginStateKeyedStore("fixture-plugin", {
-        namespace: "ns-0",
-        maxEntries: perNs + 1,
-      });
-
-      // One more row tips over the plugin-wide limit.
-      await expect(store.register("overflow", { boom: true })).rejects.toMatchObject({
-        code: "PLUGIN_STATE_LIMIT_EXCEEDED",
-      });
-    });
-  });
-
   it("evicts oldest entries when namespace maxEntries is exceeded", async () => {
     await withOpenClawTestState({ label: "e2e-limit-eviction" }, async () => {
       vi.useFakeTimers();
@@ -247,6 +216,7 @@ describe("failure safety", () => {
       const db = new DatabaseSync(resolvePluginStateSqlitePath());
       db.exec("PRAGMA user_version = 99;");
       db.close();
+      closeOpenClawStateDatabaseForTest();
 
       const store = createPluginStateKeyedStore("fixture-plugin", {
         namespace: "schema",
@@ -262,7 +232,7 @@ describe("failure safety", () => {
     await withOpenClawTestState({ label: "e2e-fail-probe" }, async () => {
       const result = probePluginStateStore();
       expect(result.ok).toBe(true);
-      expect(result.dbPath).toContain("state.sqlite");
+      expect(result.dbPath).toContain("openclaw.sqlite");
       expect(result.steps.length).toBeGreaterThanOrEqual(4);
       const failedSteps = result.steps.filter((step) => !step.ok);
       expect(failedSteps).toEqual([]);

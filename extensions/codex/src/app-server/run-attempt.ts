@@ -472,7 +472,10 @@ export async function runCodexAppServerAttempt(
     agentId: params.agentId,
   });
   const agentDir = params.agentDir ?? resolveAgentDir(params.config ?? {}, sessionAgentId);
-  const startupBinding = await readCodexAppServerBinding(params.sessionFile);
+  const startupBinding = await readCodexAppServerBinding({
+    sessionKey: sandboxSessionKey,
+    sessionFile: params.sessionFile,
+  });
   const startupAuthProfileCandidate =
     params.runtimePlan?.auth.forwardedAuthProfileId ??
     params.authProfileId ??
@@ -2060,6 +2063,11 @@ function isRetryableErrorNotification(value: JsonValue | undefined): boolean {
     return false;
   }
   return readBoolean(value, "willRetry") === true || readBoolean(value, "will_retry") === true;
+}
+
+function readBoolean(record: JsonObject, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function isTerminalTurnStatus(status: string | undefined): boolean {

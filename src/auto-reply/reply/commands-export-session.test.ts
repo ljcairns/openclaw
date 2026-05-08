@@ -27,13 +27,17 @@ const hoisted = await vi.hoisted(async () => {
 });
 
 vi.mock("../../config/sessions/paths.js", () => ({
-  resolveDefaultSessionStorePath: hoisted.resolveDefaultSessionStorePathMock,
   resolveSessionFilePath: hoisted.resolveSessionFilePathMock,
   resolveSessionFilePathOptions: hoisted.resolveSessionFilePathOptionsMock,
 }));
 
 vi.mock("../../config/sessions/store.js", () => ({
-  loadSessionStore: hoisted.loadSessionStoreMock,
+  getSessionEntry: (params: { sessionKey: string }) => hoisted.sessionRowsMock()[params.sessionKey],
+  listSessionEntries: () =>
+    Object.entries(hoisted.sessionRowsMock()).map(([sessionKey, entry]) => ({
+      sessionKey,
+      entry,
+    })),
 }));
 
 vi.mock("./commands-system-prompt.js", () => ({
@@ -149,12 +153,11 @@ describe("buildExportSessionReply", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    hoisted.resolveDefaultSessionStorePathMock.mockReturnValue("/tmp/target-store/sessions.json");
     hoisted.resolveSessionFilePathMock.mockReturnValue("/tmp/target-store/session.jsonl");
     hoisted.resolveSessionFilePathOptionsMock.mockImplementation(
       (params: { agentId: string; storePath: string }) => params,
     );
-    hoisted.loadSessionStoreMock.mockReturnValue({
+    hoisted.sessionRowsMock.mockReturnValue({
       "agent:target:session": {
         sessionId: "session-1",
         updatedAt: 1,
@@ -170,26 +173,26 @@ describe("buildExportSessionReply", () => {
     });
     hoisted.accessMock.mockResolvedValue(undefined);
     hoisted.pathExistsMock.mockResolvedValue(true);
-    hoisted.hasSqliteSessionTranscriptEventsMock.mockReturnValue(false);
-    hoisted.exportSqliteSessionTranscriptJsonlMock.mockReturnValue("");
+    hoisted.hasSqliteSessionTranscriptEventsMock.mockReturnValue(true);
+    hoisted.exportSqliteSessionTranscriptJsonlMock.mockReturnValue(
+      `${JSON.stringify({ type: "session", id: "session-1" })}\n`,
+    );
     hoisted.exportHtmlTemplateContents.clear();
   });
 
-  it("resolves store and transcript paths from the target session agent", async () => {
+  it("resolves transcript paths from the target session agent", async () => {
     const { buildExportSessionReply } = await import("./commands-export-session.js");
 
     await buildExportSessionReply(makeParams());
 
-    expect(hoisted.resolveDefaultSessionStorePathMock).toHaveBeenCalledWith("target");
     expect(hoisted.resolveSessionFilePathOptionsMock).toHaveBeenCalledWith({
       agentId: "target",
-      storePath: "/tmp/target-store/sessions.json",
     });
   });
 
-  it("prefers the active command storePath over the default target-agent store", async () => {
+  it("reads the active command session row from the session store", async () => {
     const { buildExportSessionReply } = await import("./commands-export-session.js");
-    hoisted.loadSessionStoreMock.mockReturnValue({
+    hoisted.sessionRowsMock.mockReturnValue({
       "agent:target:session": {
         sessionId: "session-1",
         updatedAt: 1,
@@ -198,20 +201,17 @@ describe("buildExportSessionReply", () => {
 
     await buildExportSessionReply({
       ...makeParams(),
-      storePath: "/tmp/custom-store/sessions.json",
     });
 
-    expect(hoisted.resolveDefaultSessionStorePathMock).not.toHaveBeenCalled();
-    expect(hoisted.loadSessionStoreMock).toHaveBeenCalledWith("/tmp/custom-store/sessions.json");
+    expect(hoisted.sessionRowsMock).toHaveBeenCalled();
     expect(hoisted.resolveSessionFilePathOptionsMock).toHaveBeenCalledWith({
       agentId: "target",
-      storePath: "/tmp/custom-store/sessions.json",
     });
   });
 
   it("uses the target store entry even when the wrapper sessionEntry is missing", async () => {
     const { buildExportSessionReply } = await import("./commands-export-session.js");
-    hoisted.loadSessionStoreMock.mockReturnValue({
+    hoisted.sessionRowsMock.mockReturnValue({
       "agent:target:session": {
         sessionId: "session-from-store",
         updatedAt: 2,
@@ -246,17 +246,13 @@ describe("buildExportSessionReply", () => {
     expect(html).not.toContain("{{MARKED_JS}}");
     expect(html).not.toContain("{{HIGHLIGHT_JS}}");
     expect(html).not.toContain("data-openclaw-export-placeholder");
-    expect(html).toContain(
-      Buffer.from(
-        JSON.stringify({
-          header: null,
-          entries: [],
-          leafId: null,
-          systemPrompt: "system prompt",
-          tools: [],
-        }),
-      ).toString("base64"),
-    );
+    expect(decodeExportedSessionData(html)).toMatchObject({
+      header: { type: "session", id: "session-1" },
+      entries: [],
+      leafId: null,
+      systemPrompt: "system prompt",
+      tools: [],
+    });
     expect(html).toContain('const base64 = document.getElementById("session-data").textContent;');
   });
 

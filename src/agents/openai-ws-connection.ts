@@ -22,7 +22,6 @@ import { buildOpenAIWebSocketWarmUpPayload } from "./openai-ws-request.js";
 import type {
   ClientEvent,
   FunctionToolDefinition,
-  InputItem,
   OpenAIResponsesAssistantPhase,
 } from "./openai-ws-types.js";
 import {

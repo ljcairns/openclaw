@@ -1,9 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import * as tar from "tar";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { backupVerifyCommand } from "../commands/backup-verify.js";
 import type { RuntimeEnv } from "../runtime.js";
+import {
+  closeOpenClawStateDatabaseForTest,
+  openOpenClawStateDatabase,
+} from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   buildExtensionsNodeModulesFilter,
@@ -39,6 +43,10 @@ async function listArchiveEntries(archivePath: string): Promise<string[]> {
   });
   return entries;
 }
+
+afterEach(() => {
+  closeOpenClawStateDatabaseForTest();
+});
 
 describe("formatBackupCreateSummary", () => {
   const backupArchiveLine = "Backup archive: /tmp/openclaw-backup.tar.gz";
@@ -167,6 +175,15 @@ describe("createBackupArchive", () => {
           "utf8",
         );
         await fs.mkdir(outputDir, { recursive: true });
+        const database = openOpenClawStateDatabase();
+        database.db
+          .prepare(
+            `
+              INSERT INTO kv (scope, key, value_json, updated_at)
+              VALUES ('backup-test', 'seed', '{}', 1)
+            `,
+          )
+          .run();
 
         const result = await createBackupArchive({
           output: outputDir,
@@ -187,6 +204,35 @@ describe("createBackupArchive", () => {
           entry.includes("/state/extensions/demo/node_modules/"),
         );
         expect(pluginNodeModuleEntries).toEqual([]);
+        expect(
+          entries.some((entry) => entry.endsWith("/state/node_modules/root-dep/index.js")),
+        ).toBe(true);
+        expect(entries.some((entry) => entry.endsWith("/state/state/openclaw.sqlite"))).toBe(true);
+
+        const backupRuns = database.db.prepare("SELECT * FROM backup_runs").all() as Array<{
+          archive_path: string;
+          status: string;
+          manifest_json: string;
+        }>;
+        expect(backupRuns).toHaveLength(1);
+        expect(backupRuns[0]?.archive_path).toBe(result.archivePath);
+        expect(backupRuns[0]?.status).toBe("completed");
+        const manifest = JSON.parse(backupRuns[0]?.manifest_json ?? "{}") as {
+          databaseSnapshots?: Array<{
+            role?: string;
+            archivePath?: string;
+            integrity?: string;
+          }>;
+        };
+        expect(manifest.databaseSnapshots).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              role: "global",
+              integrity: "ok",
+              archivePath: expect.stringContaining("/state/state/openclaw.sqlite"),
+            }),
+          ]),
+        );
 
         const runtime: RuntimeEnv = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
         await expect(

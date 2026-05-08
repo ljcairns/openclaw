@@ -239,15 +239,9 @@ export async function handleNextcloudTalkInbound(params: {
   });
 
   const fromLabel = isGroup ? `room:${roomName || roomToken}` : senderName || `user:${senderId}`;
-  const storePath = core.channel.session.resolveStorePath(
-    (config.session as Record<string, unknown> | undefined)?.store as string | undefined,
-    {
-      agentId: route.agentId,
-    },
-  );
   const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(config as OpenClawConfig);
   const previousTimestamp = core.channel.session.readSessionUpdatedAt({
-    storePath,
+    agentId: route.agentId,
     sessionKey: route.sessionKey,
   });
   const body = core.channel.reply.formatAgentEnvelope({
@@ -291,7 +285,6 @@ export async function handleNextcloudTalkInbound(params: {
     channel: CHANNEL_ID,
     accountId: account.accountId,
     route,
-    storePath,
     ctxPayload,
     core,
     deliver: async (payload) => {
