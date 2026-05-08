@@ -14,8 +14,8 @@ const extractDeliveryInfoMock = vi.fn(() => ({
   threadId: "thread-42",
 }));
 const formatDoctorNonInteractiveHintMock = vi.fn(() => "Run: openclaw doctor --non-interactive");
-const writeRestartSentinelMock = vi.fn(async (_payload: RestartSentinelPayload) => "/tmp/restart");
-const removeRestartSentinelFileMock = vi.fn(async (_path: string | null | undefined) => undefined);
+const writeRestartSentinelMock = vi.fn(async (_payload: RestartSentinelPayload) => undefined);
+const clearRestartSentinelMock = vi.fn(async () => undefined);
 const scheduleGatewaySigusr1RestartMock = vi.fn((_opts?: ScheduleGatewayRestartArgs) => ({
   scheduled: true,
   delayMs: 250,
@@ -36,7 +36,7 @@ vi.mock("../../infra/restart-sentinel.js", async () => {
   return {
     ...actual,
     formatDoctorNonInteractiveHint: formatDoctorNonInteractiveHintMock,
-    removeRestartSentinelFile: removeRestartSentinelFileMock,
+    clearRestartSentinel: clearRestartSentinelMock,
     writeRestartSentinel: writeRestartSentinelMock,
   };
 });
@@ -72,8 +72,8 @@ describe("gateway tool restart continuation", () => {
     formatDoctorNonInteractiveHintMock.mockReset();
     formatDoctorNonInteractiveHintMock.mockReturnValue("Run: openclaw doctor --non-interactive");
     writeRestartSentinelMock.mockReset();
-    writeRestartSentinelMock.mockResolvedValue("/tmp/restart");
-    removeRestartSentinelFileMock.mockClear();
+    writeRestartSentinelMock.mockResolvedValue(undefined);
+    clearRestartSentinelMock.mockClear();
     scheduleGatewaySigusr1RestartMock.mockReset();
     scheduleGatewaySigusr1RestartMock.mockReturnValue({ scheduled: true, delayMs: 250 });
   });
@@ -217,6 +217,6 @@ describe("gateway tool restart continuation", () => {
     await scheduledArgs?.emitHooks?.beforeEmit?.();
     await scheduledArgs?.emitHooks?.afterEmitRejected?.();
 
-    expect(removeRestartSentinelFileMock).toHaveBeenCalledWith("/tmp/restart");
+    expect(clearRestartSentinelMock).toHaveBeenCalledOnce();
   });
 });
