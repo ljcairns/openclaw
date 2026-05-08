@@ -227,7 +227,7 @@ describe("realtime voice agent consult runtime", () => {
     }));
     const forkSessionFromParent = vi.fn(async () => ({
       sessionId: "forked-session",
-      sessionFile: "/tmp/forked.jsonl",
+      sessionFile: "sqlite-transcript://main/forked-session.jsonl",
     }));
     __setRealtimeVoiceAgentConsultDepsForTest({
       resolveParentForkDecision,
@@ -261,14 +261,14 @@ describe("realtime voice agent consult runtime", () => {
     });
     expect(sessionStore["agent:main:subagent:google-meet:meet-1"]).toMatchObject({
       sessionId: "forked-session",
-      sessionFile: "/tmp/forked.jsonl",
+      sessionFile: "sqlite-transcript://main/forked-session.jsonl",
       spawnedBy: "agent:main:main",
       forkedFromParent: true,
     });
     expect(runEmbeddedPiAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: "forked-session",
-        sessionFile: "/tmp/forked.jsonl",
+        sessionFile: "sqlite-transcript://main/forked-session.jsonl",
         spawnedBy: "agent:main:main",
       }),
     );
