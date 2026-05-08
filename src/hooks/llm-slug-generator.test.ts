@@ -47,6 +47,7 @@ describe("generateSlugViaLLM", () => {
     expect(runEmbeddedPiAgentMock).toHaveBeenCalledOnce();
     expect(requireFirstRunOptions()).toEqual(
       expect.objectContaining({
+        sessionFile: expect.stringMatching(/^sqlite-transcript:\/\/main\/slug-generator-/),
         timeoutMs: 15_000,
         cleanupBundleMcpOnRunEnd: true,
       }),
