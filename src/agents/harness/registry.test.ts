@@ -96,7 +96,7 @@ describe("agent harness registry", () => {
     await resetRegisteredAgentHarnessSessions({
       sessionId: "session-1",
       sessionKey: "agent:main:session-1",
-      sessionFile: "/tmp/session.jsonl",
+      sessionFile: "sqlite-transcript://main/session-1.jsonl",
       reason: "reset",
     });
 
@@ -104,7 +104,7 @@ describe("agent harness registry", () => {
       {
         sessionId: "session-1",
         sessionKey: "agent:main:session-1",
-        sessionFile: "/tmp/session.jsonl",
+        sessionFile: "sqlite-transcript://main/session-1.jsonl",
         reason: "reset",
       },
     ]);
