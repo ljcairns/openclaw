@@ -79,10 +79,6 @@ function createAgentRuntime(payloads: unknown[] = [{ text: "Speak this." }]) {
         listSessionEntries,
         patchSessionEntry,
         upsertSessionEntry,
-        resolveSessionFilePath: vi.fn(
-          (_sessionId: string, entry?: { sessionFile?: string }) =>
-            entry?.sessionFile ?? "/tmp/session.json",
-        ),
       },
       runEmbeddedPiAgent,
     },

@@ -716,10 +716,6 @@ describe("skill-workshop", () => {
         agent: {
           defaults: { provider: "openai", model: "gpt-5.4" },
           resolveAgentDir: () => path.join(workspaceDir, ".agent"),
-          session: {
-            resolveSessionFilePath: (sessionId: string) =>
-              path.join(stateDir, "agents", "main", "sessions", `${sessionId}.jsonl`),
-          },
           runEmbeddedPiAgent,
         },
         state: {
@@ -754,7 +750,7 @@ describe("skill-workshop", () => {
       expect.objectContaining({
         disableTools: true,
         toolsAllow: [],
-        sessionFile: expect.stringContaining(path.join("agents", "main", "sessions")),
+        sessionFile: expect.stringMatching(/^sqlite-transcript:\/\/main\/skill-workshop-review-/u),
         provider: "openai",
         model: "gpt-5.4",
       }),
@@ -780,10 +776,6 @@ describe("skill-workshop", () => {
         agent: {
           defaults: { provider: "openai", model: "gpt-5.4" },
           resolveAgentDir: () => path.join(workspaceDir, ".agent"),
-          session: {
-            resolveSessionFilePath: (sessionId: string) =>
-              path.join(stateDir, "agents", "main", "sessions", `${sessionId}.jsonl`),
-          },
           runEmbeddedPiAgent,
         },
         state: {
@@ -854,10 +846,6 @@ describe("skill-workshop", () => {
         agent: {
           defaults: { provider: "openai", model: "gpt-5.4" },
           resolveAgentDir: () => path.join(workspaceDir, ".agent"),
-          session: {
-            resolveSessionFilePath: (sessionId: string) =>
-              path.join(stateDir, "agents", "main", "sessions", `${sessionId}.jsonl`),
-          },
           runEmbeddedPiAgent,
         },
         state: {
@@ -917,10 +905,6 @@ describe("skill-workshop", () => {
           defaults: { provider: "openai", model: "gpt-5.4" },
           resolveAgentWorkspaceDir: () => workspaceDir,
           resolveAgentDir: () => path.join(workspaceDir, ".agent"),
-          session: {
-            resolveSessionFilePath: (sessionId: string) =>
-              path.join(stateDir, "agents", "main", "sessions", `${sessionId}.jsonl`),
-          },
           runEmbeddedPiAgent,
         },
         state: {
