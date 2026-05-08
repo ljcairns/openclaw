@@ -1,9 +1,9 @@
-import fs from "node:fs";
+import { createHash } from "node:crypto";
 import type { Message } from "@grammyjs/types";
 import { formatLocationText } from "openclaw/plugin-sdk/channel-inbound";
+import { createPluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
 import type { MsgContext } from "openclaw/plugin-sdk/reply-runtime";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
-import { replaceFileAtomicSync } from "openclaw/plugin-sdk/security-runtime";
 import { resolveTelegramPrimaryMedia } from "./bot/body-helpers.js";
 import {
   buildSenderName,
@@ -35,11 +35,28 @@ export type TelegramMessageCache = {
 type MessageWithExternalReply = Message & { external_reply?: Message };
 
 type TelegramMessageCacheBucket = {
+  scopeKey?: string;
   messages: Map<string, TelegramCachedMessageNode>;
 };
 
+type TelegramPersistedMessageCacheNode = {
+  scopeKey: string;
+  cacheKey: string;
+  sourceMessage: Message;
+  threadId?: string;
+};
+
 const DEFAULT_MAX_MESSAGES = 5000;
+const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const persistedMessageCacheBuckets = new Map<string, TelegramMessageCacheBucket>();
+const MESSAGE_CACHE_STORE = createPluginStateSyncKeyedStore<TelegramPersistedMessageCacheNode>(
+  "telegram",
+  {
+    namespace: "message-cache",
+    maxEntries: 100_000,
+    defaultTtlMs: DEFAULT_TTL_MS,
+  },
+);
 
 function telegramMessageCacheKey(params: {
   accountId: string;
@@ -50,7 +67,8 @@ function telegramMessageCacheKey(params: {
 }
 
 export function resolveTelegramMessageCachePath(storePath: string): string {
-  return `${storePath}.telegram-messages.json`;
+  const trimmed = storePath.trim();
+  return trimmed ? `telegram-message-cache:${trimmed}` : "telegram-message-cache:default";
 }
 
 function resolveReplyMessage(msg: Message): Message | undefined {
@@ -136,23 +154,22 @@ function parsePersistedNode(value: unknown): TelegramCachedMessageNode | null {
   return normalizeMessageNode(value.sourceMessage, Number.isFinite(threadId) ? { threadId } : {});
 }
 
-function readPersistedMessages(filePath: string, maxMessages: number) {
+function persistedMessageEntryKey(scopeKey: string, cacheKey: string): string {
+  return createHash("sha256").update(`${scopeKey}\0${cacheKey}`, "utf8").digest("hex").slice(0, 32);
+}
+
+function readPersistedMessages(scopeKey: string, maxMessages: number) {
   const messages = new Map<string, TelegramCachedMessageNode>();
-  if (!fs.existsSync(filePath)) {
-    return messages;
-  }
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    if (!Array.isArray(parsed)) {
-      return messages;
-    }
-    for (const entry of parsed.slice(-maxMessages)) {
-      if (!isRecord(entry) || !isString(entry.key)) {
+    for (const entry of MESSAGE_CACHE_STORE.entries()
+      .filter((entry) => entry.value.scopeKey === scopeKey)
+      .slice(-maxMessages)) {
+      if (!isString(entry.value.cacheKey)) {
         continue;
       }
-      const node = parsePersistedNode(entry.node);
+      const node = parsePersistedNode(entry.value);
       if (node) {
-        messages.set(entry.key, node);
+        messages.set(entry.value.cacheKey, node);
       }
     }
   } catch (error) {
@@ -163,49 +180,49 @@ function readPersistedMessages(filePath: string, maxMessages: number) {
 
 function persistMessages(params: {
   messages: Map<string, TelegramCachedMessageNode>;
-  persistedPath?: string;
+  scopeKey?: string;
 }) {
-  const { persistedPath, messages } = params;
-  if (!persistedPath) {
+  const { scopeKey, messages } = params;
+  if (!scopeKey) {
     return;
   }
-  if (messages.size === 0) {
-    fs.rmSync(persistedPath, { force: true });
-    return;
+  const retained = new Set(messages.keys());
+  for (const entry of MESSAGE_CACHE_STORE.entries()) {
+    if (entry.value.scopeKey === scopeKey && !retained.has(entry.value.cacheKey)) {
+      MESSAGE_CACHE_STORE.delete(entry.key);
+    }
   }
-  const serialized = Array.from(messages, ([key, node]) => ({
-    key,
-    node: {
-      sourceMessage: node.sourceMessage,
-      ...(node.threadId ? { threadId: node.threadId } : {}),
-    },
-  }));
-  replaceFileAtomicSync({
-    filePath: persistedPath,
-    content: JSON.stringify(serialized),
-    tempPrefix: ".telegram-message-cache",
-  });
+  for (const [key, node] of messages) {
+    MESSAGE_CACHE_STORE.register(
+      persistedMessageEntryKey(scopeKey, key),
+      {
+        scopeKey,
+        cacheKey: key,
+        sourceMessage: node.sourceMessage,
+        ...(node.threadId ? { threadId: node.threadId } : {}),
+      },
+      { ttlMs: DEFAULT_TTL_MS },
+    );
+  }
 }
 
 function resolveMessageCacheBucket(params: {
-  persistedPath?: string;
+  scopeKey?: string;
   maxMessages: number;
 }): TelegramMessageCacheBucket {
-  const { persistedPath, maxMessages } = params;
-  if (!persistedPath) {
+  const { scopeKey, maxMessages } = params;
+  if (!scopeKey) {
     return { messages: new Map<string, TelegramCachedMessageNode>() };
   }
-  const existing = persistedMessageCacheBuckets.get(persistedPath);
+  const existing = persistedMessageCacheBuckets.get(scopeKey);
   if (existing) {
-    if (!fs.existsSync(persistedPath)) {
-      existing.messages.clear();
-    }
     return existing;
   }
   const bucket = {
-    messages: readPersistedMessages(persistedPath, maxMessages),
+    scopeKey,
+    messages: readPersistedMessages(scopeKey, maxMessages),
   };
-  persistedMessageCacheBuckets.set(persistedPath, bucket);
+  persistedMessageCacheBuckets.set(scopeKey, bucket);
   return bucket;
 }
 
@@ -214,8 +231,9 @@ export function createTelegramMessageCache(params?: {
   persistedPath?: string;
 }): TelegramMessageCache {
   const maxMessages = params?.maxMessages ?? DEFAULT_MAX_MESSAGES;
+  const scopeKey = params?.persistedPath;
   const { messages } = resolveMessageCacheBucket({
-    persistedPath: params?.persistedPath,
+    scopeKey,
     maxMessages,
   });
 
@@ -250,7 +268,7 @@ export function createTelegramMessageCache(params?: {
         messages.delete(oldest);
       }
       try {
-        persistMessages({ messages, persistedPath: params?.persistedPath });
+        persistMessages({ messages, scopeKey });
       } catch (error) {
         logVerbose(`telegram: failed to persist message cache: ${String(error)}`);
       }
