@@ -11,6 +11,7 @@ describe("tts runtime facade", () => {
     const runtimeFacadeSource = readSource("../plugin-sdk/tts-runtime.ts");
 
     expect(publicFacadeSource).toContain('} from "../plugin-sdk/tts-runtime.js";');
+    expect(publicFacadeSource).toContain("prewarmTtsRuntimeFacade");
     expect(publicFacadeSource).not.toContain("speech-core");
     expect(runtimeFacadeSource).toContain("function loadFacadeModule()");
     expect(runtimeFacadeSource).toContain('dirName: "speech-core"');

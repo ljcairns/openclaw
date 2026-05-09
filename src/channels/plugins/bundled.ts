@@ -24,6 +24,7 @@ import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js"
 import { resolveBundledChannelRootScope, type BundledChannelRootScope } from "./bundled-root.js";
 import { normalizeChannelMeta } from "./meta-normalization.js";
 import { loadChannelPluginModule } from "./module-loader.js";
+import type { ChannelOutboundAdapter } from "./types.adapters.js";
 import type { ChannelPlugin } from "./types.plugin.js";
 import type { ChannelId } from "./types.public.js";
 
@@ -37,6 +38,9 @@ type BundledChannelEntryRuntimeContract = {
   };
   register: (api: unknown) => void;
   loadChannelPlugin: (options?: BundledEntryModuleLoadOptions) => ChannelPlugin;
+  loadChannelOutbound?: (
+    options?: BundledEntryModuleLoadOptions,
+  ) => ChannelOutboundAdapter | undefined;
   loadChannelSecrets?: (
     options?: BundledEntryModuleLoadOptions,
   ) => ChannelPlugin["secrets"] | undefined;
@@ -82,6 +86,7 @@ type BundledChannelLoadContext = {
   lazyEntriesById: Map<ChannelId, GeneratedBundledChannelEntry | null>;
   lazySetupEntriesById: Map<ChannelId, BundledChannelSetupEntryRuntimeContract | null>;
   lazyPluginsById: Map<ChannelId, ChannelPlugin | null>;
+  lazyOutboundAdaptersById: Map<ChannelId, ChannelOutboundAdapter | null>;
   lazySetupPluginsById: Map<ChannelId, ChannelPlugin | null>;
   lazySecretsById: Map<ChannelId, ChannelPlugin["secrets"] | null>;
   lazySetupSecretsById: Map<ChannelId, ChannelPlugin["secrets"] | null>;
@@ -303,6 +308,7 @@ function createBundledChannelLoadContext(): BundledChannelLoadContext {
     lazyEntriesById: new Map(),
     lazySetupEntriesById: new Map(),
     lazyPluginsById: new Map(),
+    lazyOutboundAdaptersById: new Map(),
     lazySetupPluginsById: new Map(),
     lazySecretsById: new Map(),
     lazySetupSecretsById: new Map(),
@@ -601,6 +607,32 @@ function getBundledChannelSecretsForRoot(
   }
 }
 
+function getBundledChannelOutboundAdapterForRoot(
+  id: ChannelId,
+  rootScope: BundledChannelRootScope,
+  loadContext: BundledChannelLoadContext,
+): ChannelOutboundAdapter | undefined {
+  if (loadContext.lazyOutboundAdaptersById.has(id)) {
+    return loadContext.lazyOutboundAdaptersById.get(id) ?? undefined;
+  }
+  const entry = getLazyGeneratedBundledChannelEntryForRoot(id, rootScope, loadContext)?.entry;
+  if (!entry) {
+    return undefined;
+  }
+  try {
+    const outbound =
+      entry.loadChannelOutbound?.() ??
+      getBundledChannelPluginForRoot(id, rootScope, loadContext)?.outbound;
+    loadContext.lazyOutboundAdaptersById.set(id, outbound ?? null);
+    return outbound;
+  } catch (error) {
+    const detail = formatErrorMessage(error);
+    log.warn(`[channels] failed to load bundled channel outbound adapter ${id}: ${detail}`);
+    loadContext.lazyOutboundAdaptersById.set(id, null);
+    return undefined;
+  }
+}
+
 function getBundledChannelAccountInspectorForRoot(
   id: ChannelId,
   rootScope: BundledChannelRootScope,
@@ -780,6 +812,13 @@ export function getBundledChannelAccountInspector(
 export function getBundledChannelPlugin(id: ChannelId): ChannelPlugin | undefined {
   const { rootScope, loadContext } = resolveActiveBundledChannelLoadScope();
   return getBundledChannelPluginForRoot(id, rootScope, loadContext);
+}
+
+export function getBundledChannelOutboundAdapter(
+  id: ChannelId,
+): ChannelOutboundAdapter | undefined {
+  const { rootScope, loadContext } = resolveActiveBundledChannelLoadScope();
+  return getBundledChannelOutboundAdapterForRoot(id, rootScope, loadContext);
 }
 
 export function getBundledChannelSecrets(id: ChannelId): ChannelPlugin["secrets"] | undefined {

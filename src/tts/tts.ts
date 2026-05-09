@@ -12,6 +12,7 @@ export {
   listSpeechVoices,
   listTtsPersonas,
   maybeApplyTtsToPayload,
+  prewarmTtsRuntimeFacade,
   resolveExplicitTtsOverrides,
   resolveTtsAutoMode,
   resolveTtsConfig,

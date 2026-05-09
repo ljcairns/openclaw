@@ -43,6 +43,8 @@ const hoisted = vi.hoisted(() => {
   }));
   const resolveEmbeddedAgentRuntime = vi.fn(() => "pi");
   const ensureOpenClawModelsJson = vi.fn(async () => undefined);
+  const resolveModelAsync = vi.fn(async () => ({}));
+  const prewarmTtsRuntimeFacade = vi.fn(() => undefined);
   return {
     startPluginServices,
     startGmailWatcherWithLogs,
@@ -69,6 +71,8 @@ const hoisted = vi.hoisted(() => {
     resolveConfiguredModelRef,
     resolveEmbeddedAgentRuntime,
     ensureOpenClawModelsJson,
+    resolveModelAsync,
+    prewarmTtsRuntimeFacade,
   };
 });
 
@@ -178,6 +182,14 @@ vi.mock("../agents/models-config.js", () => ({
   ensureOpenClawModelsJson: hoisted.ensureOpenClawModelsJson,
 }));
 
+vi.mock("../agents/pi-embedded-runner/model.js", () => ({
+  resolveModelAsync: hoisted.resolveModelAsync,
+}));
+
+vi.mock("../tts/tts.js", () => ({
+  prewarmTtsRuntimeFacade: hoisted.prewarmTtsRuntimeFacade,
+}));
+
 vi.mock("./server-tailscale.js", () => ({
   startGatewayTailscaleExposure: hoisted.startGatewayTailscaleExposure,
 }));
@@ -223,6 +235,10 @@ describe("startGatewayPostAttachRuntime", () => {
     hoisted.resolveEmbeddedAgentRuntime.mockReturnValue("pi");
     hoisted.ensureOpenClawModelsJson.mockReset();
     hoisted.ensureOpenClawModelsJson.mockResolvedValue(undefined);
+    hoisted.resolveModelAsync.mockReset();
+    hoisted.resolveModelAsync.mockResolvedValue({});
+    hoisted.prewarmTtsRuntimeFacade.mockReset();
+    hoisted.prewarmTtsRuntimeFacade.mockReturnValue(undefined);
   });
 
   afterEach(() => {
@@ -261,7 +277,7 @@ describe("startGatewayPostAttachRuntime", () => {
       events.push("sentinel");
       return null;
     });
-    const startGatewaySidecars = vi.fn(async () => {
+    const startSidecars = vi.fn(async () => {
       events.push("sidecars");
       return { pluginServices: null };
     });
@@ -270,7 +286,7 @@ describe("startGatewayPostAttachRuntime", () => {
       createPostAttachParams(),
       createPostAttachRuntimeDeps({
         refreshLatestUpdateRestartSentinel,
-        startGatewaySidecars,
+        startGatewaySidecars: startSidecars,
       }),
     );
 
@@ -357,7 +373,7 @@ describe("startGatewayPostAttachRuntime", () => {
     const onStartupPluginsLoaded = vi.fn(() => {
       events.push("startup-loaded");
     });
-    const startGatewaySidecars = vi.fn(async (params) => {
+    const startSidecars = vi.fn(async (params) => {
       events.push("sidecars");
       expect(params.pluginRegistry).toBe(loadedPluginRegistry);
       return { pluginServices: null };
@@ -375,7 +391,7 @@ describe("startGatewayPostAttachRuntime", () => {
           onStartupPluginsLoaded,
         }),
       },
-      createPostAttachRuntimeDeps({ startGatewaySidecars }),
+      createPostAttachRuntimeDeps({ startGatewaySidecars: startSidecars }),
     );
 
     expect(events).toEqual([
@@ -415,7 +431,7 @@ describe("startGatewayPostAttachRuntime", () => {
       events.push("startup-loaded-start");
       return attachmentFinished;
     });
-    const startGatewaySidecars = vi.fn(async () => {
+    const startSidecars = vi.fn(async () => {
       events.push("sidecars");
       return { pluginServices: null };
     });
@@ -431,13 +447,13 @@ describe("startGatewayPostAttachRuntime", () => {
           onStartupPluginsLoaded,
         }),
       },
-      createPostAttachRuntimeDeps({ startGatewaySidecars }),
+      createPostAttachRuntimeDeps({ startGatewaySidecars: startSidecars }),
     );
 
     await vi.waitFor(() => {
       expect(events).toEqual(["startup-loaded-start"]);
     });
-    expect(startGatewaySidecars).not.toHaveBeenCalled();
+    expect(startSidecars).not.toHaveBeenCalled();
 
     if (!finishAttachment) {
       throw new Error("Expected startup plugin attachment release callback to be initialized");
@@ -524,20 +540,20 @@ describe("startGatewayPostAttachRuntime", () => {
     const sidecarsReady = new Promise<{ pluginServices: null }>((resolve) => {
       resumeSidecars = () => resolve({ pluginServices: null });
     });
-    const startGatewaySidecars = vi.fn(async () => {
+    const startSidecars = vi.fn(async () => {
       return await sidecarsReady;
     });
     let returned = false;
 
     const runtimePromise = startGatewayPostAttachRuntime(
       createPostAttachParams(),
-      createPostAttachRuntimeDeps({ startGatewaySidecars }),
+      createPostAttachRuntimeDeps({ startGatewaySidecars: startSidecars }),
     ).then(() => {
       returned = true;
     });
 
     await vi.waitFor(() => {
-      expect(startGatewaySidecars).toHaveBeenCalledTimes(1);
+      expect(startSidecars).toHaveBeenCalledTimes(1);
     });
     await Promise.resolve();
     expect(returned).toBe(false);
@@ -610,14 +626,18 @@ describe("startGatewayPostAttachRuntime", () => {
     await withEnvAsync(
       { OPENCLAW_SKIP_CHANNELS: undefined, OPENCLAW_SKIP_PROVIDERS: undefined },
       async () => {
-        let resolvePrewarm: (() => void) | undefined;
-        const prewarmPrimaryModel = vi.fn(
-          async () =>
-            await new Promise<undefined>((resolve) => {
-              resolvePrewarm = () => resolve(undefined);
-            }),
-        );
-        const startChannels = vi.fn(async () => undefined);
+        const events: string[] = [];
+        let resolvePrewarm!: () => void;
+        const prewarmPrimaryModel = vi.fn(async () => {
+          events.push("prewarm-start");
+          await new Promise<undefined>((resolve) => {
+            resolvePrewarm = () => resolve(undefined);
+          });
+          events.push("prewarm-done");
+        });
+        const startChannels = vi.fn(async () => {
+          events.push("channels");
+        });
 
         const sidecarsPromise = startGatewaySidecars({
           cfg: {
@@ -643,6 +663,7 @@ describe("startGatewayPostAttachRuntime", () => {
 
         await vi.waitFor(
           () => {
+            expect(hoisted.prewarmTtsRuntimeFacade).toHaveBeenCalledTimes(1);
             expect(prewarmPrimaryModel).toHaveBeenCalledTimes(1);
             expect(prewarmPrimaryModel).toHaveBeenCalledWith(
               expect.objectContaining({
@@ -655,13 +676,55 @@ describe("startGatewayPostAttachRuntime", () => {
         );
         await sidecarsPromise;
 
-        if (!resolvePrewarm) {
-          throw new Error("Expected primary model prewarm resolver to be initialized");
-        }
+        expect(events).toEqual(["prewarm-start", "channels"]);
         resolvePrewarm();
-        await Promise.resolve();
+        await vi.waitFor(() => {
+          expect(events).toEqual(["prewarm-start", "channels", "prewarm-done"]);
+        });
       },
     );
+  });
+
+  it("prewarms the TTS runtime facade before channel startup", async () => {
+    const events: string[] = [];
+    hoisted.prewarmTtsRuntimeFacade.mockImplementationOnce(() => {
+      events.push("tts-runtime");
+    });
+    const startChannels = vi.fn(async () => {
+      events.push("channels");
+    });
+
+    await withEnvAsync(
+      {
+        OPENCLAW_SKIP_CHANNELS: undefined,
+        OPENCLAW_SKIP_PROVIDERS: undefined,
+        OPENCLAW_SKIP_STARTUP_MODEL_PREWARM: "1",
+      },
+      async () => {
+        await startGatewaySidecars({
+          cfg: {
+            hooks: { internal: { enabled: false } },
+          } as never,
+          pluginRegistry: createPostAttachParams().pluginRegistry,
+          defaultWorkspaceDir: "/tmp/openclaw-workspace",
+          deps: {} as never,
+          startChannels,
+          log: { warn: vi.fn() },
+          logHooks: {
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+          },
+          logChannels: {
+            info: vi.fn(),
+            error: vi.fn(),
+          },
+        });
+      },
+    );
+
+    expect(startChannels).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(["tts-runtime", "channels"]);
   });
 
   it("keeps startup-gated methods unavailable while sidecars are still resuming", async () => {
@@ -669,7 +732,7 @@ describe("startGatewayPostAttachRuntime", () => {
     const sidecarsReady = new Promise<{ pluginServices: null }>((resolve) => {
       resumeSidecars = () => resolve({ pluginServices: null });
     });
-    const startGatewaySidecars = vi.fn(async () => {
+    const startSidecars = vi.fn(async () => {
       return await sidecarsReady;
     });
     const unavailableGatewayMethods = new Set<string>(STARTUP_UNAVAILABLE_GATEWAY_METHODS);
@@ -680,12 +743,12 @@ describe("startGatewayPostAttachRuntime", () => {
         unavailableGatewayMethods,
         deferSidecars: true,
       },
-      createPostAttachRuntimeDeps({ startGatewaySidecars }),
+      createPostAttachRuntimeDeps({ startGatewaySidecars: startSidecars }),
     );
 
     await vi.waitFor(
       () => {
-        expect(startGatewaySidecars).toHaveBeenCalledTimes(1);
+        expect(startSidecars).toHaveBeenCalledTimes(1);
       },
       { timeout: 10_000 },
     );
@@ -701,7 +764,7 @@ describe("startGatewayPostAttachRuntime", () => {
       expect([...unavailableGatewayMethods]).toEqual([]);
     });
     expect([...unavailableGatewayMethods]).toEqual([]);
-    expect(startGatewaySidecars).toHaveBeenCalledTimes(1);
+    expect(startSidecars).toHaveBeenCalledTimes(1);
   });
 
   it("dispatches registered gateway startup internal hooks without configured hook packs", async () => {
