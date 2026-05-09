@@ -166,6 +166,7 @@ function createManifestRegistryFixture(): PluginManifestRegistry {
         cliBackends: ["codex-cli"],
         contracts: {
           imageGenerationProviders: ["openai"],
+          speechProviders: ["openai"],
           videoGenerationProviders: ["openai"],
         },
       },
@@ -623,7 +624,7 @@ describe("resolveGatewayStartupPluginIds", () => {
         enabledPluginIds: ["voice-call"],
         modelId: "demo-cli/demo-model",
       }),
-      ["demo-channel", "browser", "voice-call", "memory-core"],
+      ["demo-channel", "browser", "demo-provider-plugin", "voice-call", "memory-core"],
     ],
     [
       "keeps bundled startup sidecars with enabledByDefault at idle startup",
@@ -636,6 +637,19 @@ describe("resolveGatewayStartupPluginIds", () => {
         providerIds: ["demo-provider"],
       }),
       ["demo-channel", "browser", "memory-core"],
+    ],
+    [
+      "includes configured image and PDF model owner plugins at startup",
+      {
+        channels: {},
+        agents: {
+          defaults: {
+            imageModel: { primary: "demo-cli/image-model" },
+            pdfModel: { primary: "demo-cli/pdf-model" },
+          },
+        },
+      } as unknown as OpenClawConfig,
+      ["browser", "demo-provider-plugin", "memory-core"],
     ],
     [
       "includes configured bundled speech providers at startup",
@@ -652,6 +666,18 @@ describe("resolveGatewayStartupPluginIds", () => {
         messages: { tts: { providers: { "tts-local-cli": { command: "say" } } } },
       } as OpenClawConfig,
       ["browser", "tts-local-cli", "memory-core"],
+    ],
+    [
+      "includes speech providers referenced through models.providers at startup",
+      {
+        channels: {},
+        models: {
+          providers: {
+            openai: { enabled: true },
+          },
+        },
+      } as unknown as OpenClawConfig,
+      ["browser", "openai", "memory-core"],
     ],
     [
       "maps legacy edge TTS selection to the Microsoft speech plugin",
@@ -1401,7 +1427,7 @@ describe("resolveGatewayStartupPluginIds", () => {
     });
   });
 
-  it("includes required agent harness owner plugins for model runtime policy", () => {
+  it("includes required agent harness and model owner plugins for model runtime policy", () => {
     expectStartupPluginIdsCase({
       config: {
         agents: {
@@ -1417,17 +1443,17 @@ describe("resolveGatewayStartupPluginIds", () => {
           },
         },
       } as OpenClawConfig,
-      expected: ["demo-channel", "browser", "codex", "memory-core"],
+      expected: ["demo-channel", "browser", "openai", "codex", "memory-core"],
     });
   });
 
-  it("includes Codex when an OpenAI agent model uses the implicit runtime default", () => {
+  it("includes Codex and the configured model owner when an OpenAI agent model uses the implicit runtime default", () => {
     expectStartupPluginIdsCase({
       config: createStartupConfig({
         modelId: "openai/gpt-5.5",
         enabledPluginIds: ["codex"],
       }),
-      expected: ["demo-channel", "browser", "codex", "memory-core"],
+      expected: ["demo-channel", "browser", "openai", "codex", "memory-core"],
     });
   });
 
@@ -1552,7 +1578,7 @@ describe("resolveGatewayStartupPluginIds", () => {
           },
         },
       } as OpenClawConfig,
-      expected: ["demo-channel", "browser", "memory-core"],
+      expected: ["demo-channel", "browser", "openai", "memory-core"],
     });
   });
 });
