@@ -9,6 +9,55 @@ import type { DiscordChannelInfo } from "./message-utils.js";
 import { isRecentlyUnboundThreadWebhookMessage } from "./thread-bindings.js";
 
 const DISCORD_BOUND_THREAD_SYSTEM_PREFIXES = ["⚙️", "🤖", "🧰"];
+const CLAUDE_REAUTH_THREAD_NAME_RE = /^reauth-claude-/i;
+const CALLBACK_CODE_STATE_RE = /\b[A-Za-z0-9]{20,}#[A-Za-z0-9_-]{20,}\b/;
+// Mirrors paula-daemon parseManualAuthControlLine: claude-auth-status [paula]
+// or claude-reauth [paula] [--force|force], optional leading "!".
+const CLAUDE_AUTH_CONTROL_LINE_RE =
+  /^!?(?:claude-auth-status(?:\s+paula)?|claude-reauth(?:\s+paula)?(?:\s+(?:--force|force))?)$/i;
+
+function stripAuthControlMentionPrefixes(line: string): string {
+  let trimmed = line.trim();
+  for (let i = 0; i < 4; i += 1) {
+    const next = trimmed
+      .replace(/^<@!?\d+>\s*/, "")
+      .replace(/^@?(?:jaume|paula)\s*[:,]?\s*/i, "")
+      .trim();
+    if (next === trimmed) break;
+    trimmed = next;
+  }
+  return trimmed;
+}
+
+export function isClaudeReauthThreadName(threadName?: string | null): boolean {
+  return CLAUDE_REAUTH_THREAD_NAME_RE.test(normalizeOptionalString(threadName) ?? "");
+}
+
+export function isClaudeReauthCallbackText(text?: string | null): boolean {
+  return CALLBACK_CODE_STATE_RE.test(normalizeOptionalString(text) ?? "");
+}
+
+export function isClaudeAuthControlCommandText(text?: string | null): boolean {
+  const normalized = normalizeOptionalString(text) ?? "";
+  if (!normalized) return false;
+  const lines = normalized
+    .split(/\r?\n/)
+    .map(stripAuthControlMentionPrefixes)
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) return false;
+  return lines.every((line) => CLAUDE_AUTH_CONTROL_LINE_RE.test(line));
+}
+
+export function shouldIgnoreClaudeReauthThreadMessage(params: {
+  threadName?: string | null;
+  text?: string | null;
+}): boolean {
+  return isClaudeReauthThreadName(params.threadName);
+}
+
+export function shouldIgnoreClaudeAuthControlMessage(params: { text?: string | null }): boolean {
+  return isClaudeAuthControlCommandText(params.text);
+}
 
 export function isBoundThreadBotSystemMessage(params: {
   isBoundThreadSession: boolean;

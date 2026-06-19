@@ -476,6 +476,53 @@ describe("web search runtime", () => {
     });
   });
 
+  it("does not fall back when a provider returns a terminal provider_auth_error", async () => {
+    const fallbackExecute = vi.fn(async (args: Record<string, unknown>) => ({
+      ...args,
+      provider: "duckduckgo",
+    }));
+    resolveRuntimeWebSearchProvidersMock.mockReturnValue([
+      createGoogleSearchProvider({
+        requiresCredential: false,
+        createTool: () => ({
+          description: "google",
+          parameters: {},
+          execute: async () => ({
+            ok: false,
+            error_type: "provider_auth_error",
+            provider: "google",
+            terminal: true,
+            message: "Search API key is invalid or unauthorized",
+          }),
+        }),
+      }),
+      createDuckDuckGoSearchProvider({
+        createTool: () => ({
+          description: "duckduckgo",
+          parameters: {},
+          execute: fallbackExecute,
+        }),
+      }),
+    ]);
+
+    await expect(
+      runWebSearch({
+        config: {},
+        args: { query: "terminal-provider-auth" },
+      }),
+    ).resolves.toEqual({
+      provider: "google",
+      result: {
+        ok: false,
+        error_type: "provider_auth_error",
+        provider: "google",
+        terminal: true,
+        message: "Search API key is invalid or unauthorized",
+      },
+    });
+    expect(fallbackExecute).not.toHaveBeenCalled();
+  });
+
   it("does not fall back when an auto-selected provider returns a validation error payload", async () => {
     resolveRuntimeWebSearchProvidersMock.mockReturnValue([
       createGoogleSearchProvider({

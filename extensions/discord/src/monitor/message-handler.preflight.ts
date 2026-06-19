@@ -34,6 +34,8 @@ import {
   resolveDiscordMentionState,
   resolveInjectedBoundThreadLookupRecord,
   resolvePreflightMentionRequirement,
+  shouldIgnoreClaudeAuthControlMessage,
+  shouldIgnoreClaudeReauthThreadMessage,
   shouldIgnoreBoundThreadWebhookMessage,
 } from "./message-handler.preflight-helpers.js";
 import { buildDiscordPreflightHistoryEntry } from "./message-handler.preflight-history.js";
@@ -133,6 +135,13 @@ export async function preflightDiscordMessage(
   const messageText = resolveDiscordMessageText(message, {
     includeForwarded: true,
   });
+  if (shouldIgnoreClaudeAuthControlMessage({ text: messageText })) {
+    // Paula owns claude-auth-status / claude-reauth control commands. Drop
+    // them here so Jaume does not run VPS/script lookup or task routing on
+    // the same message and reply alongside Paula.
+    logVerbose(`discord: drop Paula-owned Claude auth control message ${message.id}`);
+    return null;
+  }
   const injectedBoundThreadBinding =
     !isDirectMessage && !isGroupDm
       ? resolveInjectedBoundThreadLookupRecord({
@@ -374,6 +383,15 @@ export async function preflightDiscordMessage(
     threadParentId,
     threadParentName,
   });
+  if (
+    shouldIgnoreClaudeReauthThreadMessage({
+      threadName,
+      text: messageText,
+    })
+  ) {
+    logVerbose(`discord: drop Paula-owned Claude reauth thread message ${message.id}`);
+    return null;
+  }
   const channelMatchMeta = formatAllowlistMatchMeta(channelConfig);
   logDiscordPreflightChannelConfig({
     channelConfig,
