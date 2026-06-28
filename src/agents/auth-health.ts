@@ -181,11 +181,26 @@ function buildProfileHealth(params: {
     now,
     oauthWarnAfterMs,
   );
+  // Anthropic's CLI silently refreshes an expired OAuth access token on next use,
+  // so a hard "expired" derived purely from the access-token clock produces a
+  // FALSE "please sign in" alert (the recurring Claude false-logout) when a
+  // refresh token is still present. Other providers (e.g. openai-codex) do NOT
+  // silently refresh, so their expired state is a real logout and must be kept —
+  // scope this downgrade to anthropic only. A genuinely revoked refresh token
+  // still surfaces via the separate OAuth-refresh-failure path. Soft "expiring"
+  // is preserved for everyone (it does not raise a logout).
+  const hasRefreshMaterial =
+    typeof effectiveCredential.refresh === "string" && effectiveCredential.refresh.length > 0;
+  const refreshesExpiredAccessSilently = provider === "anthropic";
+  const status: AuthProfileHealthStatus =
+    refreshesExpiredAccessSilently && hasRefreshMaterial && rawStatus === "expired"
+      ? "ok"
+      : rawStatus;
   return {
     profileId,
     provider,
     type: "oauth",
-    status: rawStatus,
+    status,
     expiresAt: effectiveCredential.expires,
     remainingMs,
     source,

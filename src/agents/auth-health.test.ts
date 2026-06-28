@@ -105,12 +105,42 @@ describe("buildAuthHealthSummary", () => {
     const statuses = profileStatuses(summary);
 
     expect(statuses["anthropic:ok"]).toBe("ok");
+    // Soft "expiring" is preserved (it does not raise a logout alert). The hard
+    // "expired" state is downgraded to "ok" for a refreshable profile (OpenClaw
+    // refreshes on use) so it no longer raises a false "please sign in" alert.
     expect(statuses["anthropic:expiring"]).toBe("expiring");
-    expect(statuses["anthropic:expired"]).toBe("expired");
+    expect(statuses["anthropic:expired"]).toBe("ok");
     expect(statuses["anthropic:api"]).toBe("static");
 
     const provider = summary.providers.find((entry) => entry.provider === "anthropic");
-    expect(provider?.status).toBe("expired");
+    expect(provider?.status).toBe("expiring");
+  });
+
+  it("does not report a refreshable OAuth profile as expired (false-logout fix)", () => {
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const store = {
+      version: 1,
+      profiles: {
+        "anthropic:refreshable": {
+          type: "oauth" as const,
+          provider: "anthropic",
+          access: "access",
+          refresh: "refresh",
+          expires: now - 60_000, // access token expired an hour-equivalent ago
+        },
+      },
+    };
+
+    const summary = buildAuthHealthSummary({
+      store,
+      warnAfterMs: DEFAULT_OAUTH_WARN_MS,
+    });
+
+    // Real revocation surfaces via the OAuth-refresh-failure path, not from the
+    // access-token clock — so a stale access token alone must not read as logged out.
+    expect(profileStatuses(summary)["anthropic:refreshable"]).toBe("ok");
+    const provider = summary.providers.find((entry) => entry.provider === "anthropic");
+    expect(provider?.status).toBe("ok");
   });
 
   it("reports expired for OAuth without a refresh token", () => {
